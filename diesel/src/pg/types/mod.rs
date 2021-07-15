@@ -183,7 +183,6 @@ pub mod sql_types {
     pub type BigSerial = crate::sql_types::BigInt;
 
     /// The `UUID` SQL type. This type can only be used with `feature = "uuid"`
-    /// (uuid <=0.6) or `feature = "uuidv07"` (uuid = 0.7)
     ///
     /// ### [`ToSql`] impls
     ///
@@ -265,12 +264,12 @@ pub mod sql_types {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// #     use diesel::insert_into;
     /// #     use self::contacts::dsl::*;
-    /// #     let connection = connection_no_data();
+    /// #     let connection = &mut connection_no_data();
     /// #     diesel::sql_query("CREATE TABLE contacts (
     /// #         id SERIAL PRIMARY KEY,
     /// #         name VARCHAR NOT NULL,
     /// #         address JSONB NOT NULL
-    /// #     )").execute(&connection)?;
+    /// #     )").execute(connection)?;
     /// let santas_address: serde_json::Value = serde_json::from_str(r#"{
     ///     "street": "Article Circle Expressway 1",
     ///     "city": "North Pole",
@@ -280,7 +279,7 @@ pub mod sql_types {
     /// let inserted_address = insert_into(contacts)
     ///     .values((name.eq("Claus"), address.eq(&santas_address)))
     ///     .returning(address)
-    ///     .get_result::<serde_json::Value>(&connection)?;
+    ///     .get_result::<serde_json::Value>(connection)?;
     /// assert_eq!(santas_address, inserted_address);
     /// #     Ok(())
     /// # }
@@ -322,7 +321,7 @@ pub mod sql_types {
     /// # fn main() {
     /// #     use diesel::insert_into;
     /// #     use self::items::dsl::*;
-    /// #     let connection = connection_no_data();
+    /// #     let connection = &mut connection_no_data();
     /// #     connection.execute("CREATE TABLE items (
     /// #         id SERIAL PRIMARY KEY,
     /// #         name VARCHAR NOT NULL,
@@ -331,7 +330,7 @@ pub mod sql_types {
     /// let inserted_price = insert_into(items)
     ///     .values((name.eq("Shiny Thing"), price.eq(Cents(123_456))))
     ///     .returning(price)
-    ///     .get_result(&connection);
+    ///     .get_result(connection);
     /// assert_eq!(Ok(Cents(123_456)), inserted_price);
     /// # }
     /// ```
@@ -366,15 +365,15 @@ pub mod sql_types {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// #     use diesel::insert_into;
     /// #     use self::devices::dsl::*;
-    /// #     let connection = connection_no_data();
+    /// #     let connection = &mut connection_no_data();
     /// #     diesel::sql_query("CREATE TABLE devices (
     /// #         id SERIAL PRIMARY KEY,
     /// #         macaddr MACADDR NOT NULL
-    /// #     )").execute(&connection)?;
+    /// #     )").execute(connection)?;
     /// let inserted_macaddr = insert_into(devices)
     ///     .values(macaddr.eq([0x08, 0x00, 0x2b, 0x01, 0x02, 0x03]))
     ///     .returning(macaddr)
-    ///     .get_result::<[u8; 6]>(&connection)?;
+    ///     .get_result::<[u8; 6]>(connection)?;
     /// assert_eq!([0x08, 0x00, 0x2b, 0x01, 0x02, 0x03], inserted_macaddr);
     /// #     Ok(())
     /// # }
@@ -423,16 +422,16 @@ pub mod sql_types {
     ///
     /// #     use diesel::insert_into;
     /// #     use self::clients::dsl::*;
-    /// #     let connection = connection_no_data();
+    /// #     let connection = &mut connection_no_data();
     /// #     diesel::sql_query("CREATE TABLE clients (
     /// #         id SERIAL PRIMARY KEY,
     /// #         ip_address INET NOT NULL
-    /// #     )").execute(&connection)?;
+    /// #     )").execute(connection)?;
     /// let addr = "10.1.9.32/32".parse::<IpNetwork>()?;
     /// let inserted_address = insert_into(clients)
     ///     .values(ip_address.eq(&addr))
     ///     .returning(ip_address)
-    ///     .get_result(&connection)?;
+    ///     .get_result(connection)?;
     /// assert_eq!(addr, inserted_address);
     /// #     Ok(())
     /// # }
@@ -480,16 +479,16 @@ pub mod sql_types {
     ///
     /// #     use diesel::insert_into;
     /// #     use self::clients::dsl::*;
-    /// #     let connection = connection_no_data();
+    /// #     let connection = &mut connection_no_data();
     /// #     diesel::sql_query("CREATE TABLE clients (
     /// #         id SERIAL PRIMARY KEY,
     /// #         ip_address CIDR NOT NULL
-    /// #     )").execute(&connection)?;
+    /// #     )").execute(connection)?;
     /// let addr = "10.1.9.32/32".parse::<IpNetwork>()?;
     /// let inserted_addr = insert_into(clients)
     ///     .values(ip_address.eq(&addr))
     ///     .returning(ip_address)
-    ///     .get_result(&connection)?;
+    ///     .get_result(connection)?;
     /// assert_eq!(addr, inserted_addr);
     /// #     Ok(())
     /// # }

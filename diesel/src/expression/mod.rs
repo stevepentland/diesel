@@ -22,6 +22,8 @@ pub mod functions;
 #[doc(hidden)]
 pub mod array_comparison;
 #[doc(hidden)]
+pub mod assume_not_null;
+#[doc(hidden)]
 pub mod bound;
 #[doc(hidden)]
 pub mod coerce;
@@ -39,6 +41,8 @@ pub mod nullable;
 #[doc(hidden)]
 #[macro_use]
 pub mod operators;
+#[doc(hidden)]
+pub mod select_by;
 #[doc(hidden)]
 pub mod sql_literal;
 #[doc(hidden)]
@@ -72,6 +76,9 @@ pub mod dsl {
 
     /// The return type of [`count_star()`](crate::dsl::count_star())
     pub type count_star = super::count::CountStar;
+
+    /// The return type of [`count_distinct()`](crate::dsl::count_distinct())
+    pub type count_distinct<Expr> = super::count::CountDistinct<SqlTypeOf<Expr>, Expr>;
 
     /// The return type of [`date(expr)`](crate::dsl::date())
     pub type date<Expr> = super::functions::date_and_time::date::HelperType<Expr>;
@@ -133,7 +140,7 @@ pub mod expression_types {
     impl<ST> TypedExpressionType for ST where ST: SingleValue {}
 
     impl<DB: Backend> QueryMetadata<Untyped> for DB {
-        fn row_metadata(_: &DB::MetadataLookup, row: &mut Vec<Option<DB::TypeMetadata>>) {
+        fn row_metadata(_: &mut DB::MetadataLookup, row: &mut Vec<Option<DB::TypeMetadata>>) {
             row.push(None)
         }
     }
@@ -156,7 +163,7 @@ pub trait QueryMetadata<T>: Backend {
     /// The exact return value of this function is considerded to be a
     /// backend specific implementation detail. You should not rely on those
     /// values if you not own the corresponding backend
-    fn row_metadata(lookup: &Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>);
+    fn row_metadata(lookup: &mut Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>);
 }
 
 impl<T, DB> QueryMetadata<T> for DB
@@ -164,7 +171,7 @@ where
     DB: Backend + HasSqlType<T>,
     T: SingleValue,
 {
-    fn row_metadata(lookup: &Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
+    fn row_metadata(lookup: &mut Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
         out.push(Some(<DB as HasSqlType<T>>::metadata(lookup)))
     }
 }
@@ -231,10 +238,10 @@ where
 /// #
 /// # fn main() {
 /// use diesel::sql_types::Text;
-/// #   let conn = establish_connection();
+/// #   let conn = &mut establish_connection();
 /// let names = users::table
 ///     .select("The Amazing ".into_sql::<Text>().concat(users::name))
-///     .load(&conn);
+///     .load(conn);
 /// let expected_names = vec![
 ///     "The Amazing Sean".to_string(),
 ///     "The Amazing Tess".to_string(),
@@ -316,6 +323,126 @@ where
     T: SelectableExpression<QS>,
     &'a T: AppearsOnTable<QS>,
 {
+}
+
+/// Trait indicating that a record can be selected and queried from the database.
+///
+/// Types which implement `Selectable` represent the select clause of a SQL query.
+/// Use [`SelectableHelper::as_select()`] to construct the select clause. Once you
+/// called `.select(YourType::as_select())` we enforce at the type system level that you
+/// use the same type to load the query result into.
+///
+/// The constructed select clause can contain arbitrary expressions coming from different
+/// tables. The corresponding [derive](derive@Selectable) provides a simple way to
+/// construct a select clause matching fields to the corresponding table columns.
+///
+/// # Examples
+///
+/// If you just want to construct a select clause using an existing struct, you can use
+/// `#[derive(Selectable)]`, See [`#[derive(Selectable)]`](derive@Selectable) for details.
+///
+///
+/// ```rust
+/// # include!("../doctest_setup.rs");
+/// #
+/// use schema::users;
+///
+/// #[derive(Queryable, PartialEq, Debug, Selectable)]
+/// struct User {
+///     id: i32,
+///     name: String,
+/// }
+///
+/// # fn main() {
+/// #     run_test();
+/// # }
+/// #
+/// # fn run_test() -> QueryResult<()> {
+/// #     use schema::users::dsl::*;
+/// #     let connection = &mut establish_connection();
+/// let first_user = users.select(User::as_select()).first(connection)?;
+/// let expected = User { id: 1, name: "Sean".into() };
+/// assert_eq!(expected, first_user);
+/// #     Ok(())
+/// # }
+/// ```
+///
+/// Alternatively, we can implement the trait for our struct manually.
+///
+/// ```rust
+/// # include!("../doctest_setup.rs");
+/// #
+/// use schema::users;
+/// use diesel::prelude::{Queryable, Selectable};
+/// use diesel::backend::Backend;
+///
+/// #[derive(Queryable, PartialEq, Debug)]
+/// struct User {
+///     id: i32,
+///     name: String,
+/// }
+///
+/// impl<DB> Selectable<DB> for User
+/// where
+///     DB: Backend
+/// {
+///     type SelectExpression = (users::id, users::name);
+///
+///     fn construct_selection() -> Self::SelectExpression {
+///         (users::id, users::name)
+///     }
+/// }
+///
+/// # fn main() {
+/// #     run_test();
+/// # }
+/// #
+/// # fn run_test() -> QueryResult<()> {
+/// #     use schema::users::dsl::*;
+/// #     let connection = &mut establish_connection();
+/// let first_user = users.select(User::as_select()).first(connection)?;
+/// let expected = User { id: 1, name: "Sean".into() };
+/// assert_eq!(expected, first_user);
+/// #     Ok(())
+/// # }
+/// ```
+pub trait Selectable<DB: Backend> {
+    /// The expression you'd like to select.
+    ///
+    /// This is typically a tuple of corresponding to the table columns of your struct's fields.
+    type SelectExpression: Expression;
+
+    /// Construct an instance of the expression
+    fn construct_selection() -> Self::SelectExpression;
+}
+
+#[doc(inline)]
+pub use diesel_derives::Selectable;
+
+/// This helper trait provides several methods for
+/// constructing a select or returning clause based on a
+/// [`Selectable`] implementation.
+pub trait SelectableHelper<DB: Backend>: Selectable<DB> + Sized {
+    /// Construct a select clause based on a [`Selectable`] implementation.
+    ///
+    /// The returned select clause enforces that you use the same type
+    /// for constructing the select clause and for loading the query result into.
+    fn as_select() -> select_by::SelectBy<Self, DB>;
+
+    /// An alias for `as_select` that can be used with returning clauses
+    fn as_returning() -> select_by::SelectBy<Self, DB> {
+        Self::as_select()
+    }
+}
+
+impl<T, DB> SelectableHelper<DB> for T
+where
+    T: Selectable<DB>,
+    DB: Backend,
+{
+    fn as_select() -> select_by::SelectBy<Self, DB> {
+        select_by::SelectBy::new()
+    }
 }
 
 /// Is this expression valid for a given group by clause?
@@ -522,7 +649,7 @@ use crate::query_builder::{QueryFragment, QueryId};
 /// # }
 /// #
 /// # fn run_test() -> QueryResult<()> {
-/// #     let conn = establish_connection();
+/// #     let conn = &mut establish_connection();
 /// enum Search {
 ///     Id(i32),
 ///     Name(String),
@@ -541,12 +668,12 @@ use crate::query_builder::{QueryFragment, QueryId};
 ///
 /// let user_one = users::table
 ///     .filter(find_user(Search::Id(1)))
-///     .first(&conn)?;
+///     .first(conn)?;
 /// assert_eq!((1, String::from("Sean")), user_one);
 ///
 /// let tess = users::table
 ///     .filter(find_user(Search::Name("Tess".into())))
-///     .first(&conn)?;
+///     .first(conn)?;
 /// assert_eq!((2, String::from("Tess")), tess);
 /// #     Ok(())
 /// # }
@@ -567,7 +694,7 @@ use crate::query_builder::{QueryFragment, QueryId};
 /// # }
 /// #
 /// # fn run_test() -> QueryResult<()> {
-/// #     let conn = establish_connection();
+/// #     let conn = &mut establish_connection();
 /// enum NameOrConst {
 ///     Name,
 ///     Const(String),
@@ -605,22 +732,24 @@ use crate::query_builder::{QueryFragment, QueryId};
 ///
 /// let user_one = users::table
 ///     .select(selection(NameOrConst::Name))
-///     .first::<String>(&conn)?;
+///     .first::<String>(conn)?;
 /// assert_eq!(String::from("Sean"), user_one);
 ///
 /// let with_name = users::table
 ///     .group_by(users::name)
 ///     .select(selection(NameOrConst::Const("Jane Doe".into())))
-///     .first::<String>(&conn)?;
+///     .first::<String>(conn)?;
 /// assert_eq!(String::from("Jane Doe"), with_name);
 /// #     Ok(())
 /// # }
 /// ```
 ///
 /// ## More advanced query source
+///
 /// This example is a bit contrived, but in general, if you want to for example filter based on
 /// different criteria on a joined table, you can use `InnerJoinQuerySource` and
 /// `LeftJoinQuerySource` in the QS parameter of `BoxableExpression`.
+///
 /// ```rust
 /// # include!("../doctest_setup.rs");
 /// # use schema::{users, posts};
@@ -632,7 +761,7 @@ use crate::query_builder::{QueryFragment, QueryId};
 /// # }
 /// #
 /// # fn run_test() -> QueryResult<()> {
-/// #     let conn = establish_connection();
+/// #     let conn = &mut establish_connection();
 /// enum UserPostFilter {
 ///     User(i32),
 ///     Post(i32),
@@ -656,7 +785,7 @@ use crate::query_builder::{QueryFragment, QueryId};
 ///     .inner_join(posts::table)
 ///     .filter(filter_user_posts(UserPostFilter::User(2)))
 ///     .select((posts::title, users::name))
-///     .first::<(String, String)>(&conn)?;
+///     .first::<(String, String)>(conn)?;
 ///
 /// assert_eq!(
 ///     ("My first post too".to_string(), "Tess".to_string()),

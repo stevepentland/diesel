@@ -45,6 +45,7 @@ mod insertable;
 mod query_id;
 mod queryable;
 mod queryable_by_name;
+mod selectable;
 mod sql_function;
 mod sql_type;
 mod valid_grouping;
@@ -305,7 +306,7 @@ pub fn derive_identifiable(input: TokenStream) -> TokenStream {
 /// #
 /// # fn run_test() -> QueryResult<()> {
 /// #     use schema::users::dsl::*;
-/// #     let connection = connection_no_data();
+/// #     let connection = &mut connection_no_data();
 /// #     connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL)").unwrap();
 /// let user = InsertableUser {
 ///     id: 1,
@@ -314,12 +315,12 @@ pub fn derive_identifiable(input: TokenStream) -> TokenStream {
 ///
 /// diesel::insert_into(users)
 ///     .values(user)
-///     .execute(&connection)
+///     .execute(connection)
 ///     .unwrap();
 ///
 /// assert_eq!(
 ///     Ok("THOMAS".to_string()),
-///     users.select(name).first(&connection)
+///     users.select(name).first(connection)
 /// );
 /// # Ok(())
 /// # }
@@ -430,8 +431,8 @@ pub fn derive_query_id(input: TokenStream) -> TokenStream {
 /// #
 /// # fn run_test() -> QueryResult<()> {
 /// #     use schema::users::dsl::*;
-/// #     let connection = establish_connection();
-/// let first_user = users.first(&connection)?;
+/// #     let connection = &mut establish_connection();
+/// let first_user = users.first(connection)?;
 /// let expected = User { id: 1, name: "Sean".into() };
 /// assert_eq!(expected, first_user);
 /// #     Ok(())
@@ -485,8 +486,8 @@ pub fn derive_query_id(input: TokenStream) -> TokenStream {
 /// #
 /// # fn run_test() -> QueryResult<()> {
 /// #     use schema::users::dsl::*;
-/// #     let connection = establish_connection();
-/// let first_user = users.first(&connection)?;
+/// #     let connection = &mut establish_connection();
+/// let first_user = users.first(connection)?;
 /// let expected = User { id: 1, name: "sean".into() };
 /// assert_eq!(expected, first_user);
 /// #     Ok(())
@@ -531,8 +532,8 @@ pub fn derive_query_id(input: TokenStream) -> TokenStream {
 /// #
 /// # fn run_test() -> QueryResult<()> {
 /// #     use schema::users::dsl::*;
-/// #     let connection = establish_connection();
-/// let first_user = users.first(&connection)?;
+/// #     let connection = &mut establish_connection();
+/// let first_user = users.first(connection)?;
 /// let expected = User { id: 1, name: "sean".into() };
 /// assert_eq!(expected, first_user);
 /// #     Ok(())
@@ -618,9 +619,9 @@ pub fn derive_queryable(input: TokenStream) -> TokenStream {
 /// # }
 /// #
 /// # fn run_test() -> QueryResult<()> {
-/// #     let connection = establish_connection();
+/// #     let connection = &mut establish_connection();
 /// let first_user = sql_query("SELECT * FROM users ORDER BY id LIMIT 1")
-///     .get_result(&connection)?;
+///     .get_result(connection)?;
 /// let expected = User { id: 1, name: "Sean".into() };
 /// assert_eq!(expected, first_user);
 /// #     Ok(())
@@ -671,9 +672,9 @@ pub fn derive_queryable(input: TokenStream) -> TokenStream {
 /// # }
 /// #
 /// # fn run_test() -> QueryResult<()> {
-/// #     let connection = establish_connection();
+/// #     let connection = &mut establish_connection();
 /// let first_user = sql_query("SELECT * FROM users ORDER BY id LIMIT 1")
-///     .get_result(&connection)?;
+///     .get_result(connection)?;
 /// let expected = User { id: 1, name: "sean".into() };
 /// assert_eq!(expected, first_user);
 /// #     Ok(())
@@ -717,9 +718,9 @@ pub fn derive_queryable(input: TokenStream) -> TokenStream {
 /// # }
 /// #
 /// # fn run_test() -> QueryResult<()> {
-/// #     let connection = establish_connection();
+/// #     let connection = &mut establish_connection();
 /// let first_user = sql_query("SELECT * FROM users ORDER BY id LIMIT 1")
-///     .get_result(&connection)?;
+///     .get_result(connection)?;
 /// let expected = User { id: 1, name: "Sean".into() };
 /// assert_eq!(expected, first_user);
 /// #     Ok(())
@@ -728,6 +729,48 @@ pub fn derive_queryable(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(QueryableByName, attributes(table_name, column_name, sql_type, diesel))]
 pub fn derive_queryable_by_name(input: TokenStream) -> TokenStream {
     expand_proc_macro(input, queryable_by_name::derive)
+}
+
+/// Implements `Selectable`
+///
+/// To implement `Selectable` this derive needs to know the corresponding table
+/// type. By default it uses the `snake_case` type name with an added `s`.
+/// It is possible to change this default by using `#[table_name = "something"]`.
+///
+/// If the name of a field on your struct is different than the column in your
+/// `table!` declaration, or if you are deriving this trait on a tuple struct,
+/// you can annotate the field with `#[column_name = "some_column"]`. For tuple
+/// structs, all fields must have this annotation.
+///
+/// If a field is another struct which implements `Selectable`,
+/// instead of a column, you can annotate that struct with `#[diesel(embed)]`.
+/// Then all fields contained by that inner struct are selected as separate tuple.
+/// Fields from a inner struct can come from a different table, as long as the
+/// select clause is valid in current query.
+///
+/// The derive enables using the `SelectableHelper::as_select` method to construct
+/// select clauses, in order to use LoadDsl, you might also check the
+/// `Queryable` trait and derive.
+///
+/// # Attributes
+///
+/// ## Type attributes
+///
+/// * `#[table_name = "path::to::table"]`, specifies a path to the table for which the
+/// current type is selectable. The path is relative to the current module.
+/// If this attribute is not used, the type name converted to
+/// `snake_case` with an added `s` is used as table name.
+///
+/// ## Field attributes
+/// * `#[column_name = "some_column"]`, overrides the column name for
+///    a given field. If not set, the name of the field is used as column
+///    name.
+/// * `#[diesel(embed)]`, specifies that the current field maps not only
+///    single database column, but is a type that implements
+///    `Selectable` on it's own
+#[proc_macro_derive(Selectable, attributes(table_name, column_name, sql_type, diesel))]
+pub fn derive_selectable(input: TokenStream) -> TokenStream {
+    expand_proc_macro(input, selectable::derive)
 }
 
 /// Implement necessary traits for adding a new sql type
@@ -987,14 +1030,14 @@ pub fn derive_valid_grouping(input: TokenStream) -> TokenStream {
 ///
 /// # #[cfg(feature = "sqlite")]
 /// # fn run_test() -> Result<(), Box<::std::error::Error>> {
-/// let connection = SqliteConnection::establish(":memory:")?;
+/// let connection = &mut SqliteConnection::establish(":memory:")?;
 ///
-/// add_mul::register_impl(&connection, |x: i32, y: i32, z: f64| {
+/// add_mul::register_impl(connection, |x: i32, y: i32, z: f64| {
 ///     (x + y) as f64 * z
 /// })?;
 ///
 /// let result = select(add_mul(1, 2, 1.5))
-///     .get_result::<f64>(&connection)?;
+///     .get_result::<f64>(connection)?;
 /// assert_eq!(4.5, result);
 /// #     Ok(())
 /// # }
@@ -1062,14 +1105,14 @@ pub fn derive_valid_grouping(input: TokenStream) -> TokenStream {
 /// # #[cfg(feature = "sqlite")]
 /// fn run() -> Result<(), Box<dyn (::std::error::Error)>> {
 /// #    use self::players::dsl::*;
-///     let connection = SqliteConnection::establish(":memory:")?;
+///     let connection = &mut SqliteConnection::establish(":memory:")?;
 /// #    connection.execute("create table players (id integer primary key autoincrement, score integer)").unwrap();
 /// #    connection.execute("insert into players (score) values (10), (20), (30)").unwrap();
 ///
-///     my_sum::register_impl::<MySum, _>(&connection)?;
+///     my_sum::register_impl::<MySum, _>(connection)?;
 ///
 ///     let total_score = players.select(my_sum(score))
-///         .get_result::<i32>(&connection)?;
+///         .get_result::<i32>(connection)?;
 ///
 ///     println!("The total score of all the players is: {}", total_score);
 ///
@@ -1138,14 +1181,14 @@ pub fn derive_valid_grouping(input: TokenStream) -> TokenStream {
 /// # #[cfg(feature = "sqlite")]
 /// fn run() -> Result<(), Box<dyn (::std::error::Error)>> {
 /// #    use self::student_avgs::dsl::*;
-///     let connection = SqliteConnection::establish(":memory:")?;
+///     let connection = &mut SqliteConnection::establish(":memory:")?;
 /// #    connection.execute("create table student_avgs (id integer primary key autoincrement, s1_avg float, s2_avg float)").unwrap();
 /// #    connection.execute("insert into student_avgs (s1_avg, s2_avg) values (85.5, 90), (79.8, 80.1)").unwrap();
 ///
-///     range_max::register_impl::<RangeMax<f32>, _, _>(&connection)?;
+///     range_max::register_impl::<RangeMax<f32>, _, _>(connection)?;
 ///
 ///     let result = student_avgs.select(range_max(s1_avg, s2_avg))
-///         .get_result::<Option<f32>>(&connection)?;
+///         .get_result::<Option<f32>>(connection)?;
 ///
 ///     if let Some(max_semeseter_avg) = result {
 ///         println!("The largest semester average is: {}", max_semeseter_avg);

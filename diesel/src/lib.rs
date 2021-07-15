@@ -306,6 +306,9 @@ pub mod helper_types {
     /// Represents the return type of `.group_by(expr)`
     pub type GroupBy<Source, Expr> = <Source as GroupByDsl<Expr>>::Output;
 
+    /// Represents the return type of `.having(predicate)`
+    pub type Having<Source, Predicate> = <Source as HavingDsl<Predicate>>::Output;
+
     /// Represents the return type of `.union(rhs)`
     pub type Union<Source, Rhs> = CombinationClause<
         combination_clause::Union,
@@ -382,7 +385,7 @@ pub mod prelude {
     pub use crate::deserialize::{Queryable, QueryableByName};
     #[doc(inline)]
     pub use crate::expression::{
-        AppearsOnTable, BoxableExpression, Expression, IntoSql, SelectableExpression,
+        AppearsOnTable, BoxableExpression, Expression, IntoSql, Selectable, SelectableExpression,
     };
 
     #[doc(inline)]
@@ -406,6 +409,8 @@ pub mod prelude {
     pub use crate::query_source::{Column, JoinTo, QuerySource, Table};
     #[doc(inline)]
     pub use crate::result::{ConnectionError, ConnectionResult, OptionalExtension, QueryResult};
+
+    pub use crate::expression::SelectableHelper;
 
     #[cfg(feature = "mysql")]
     #[doc(inline)]

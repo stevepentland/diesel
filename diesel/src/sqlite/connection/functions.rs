@@ -40,6 +40,24 @@ where
     Ok(())
 }
 
+pub fn register_noargs<RetSqlType, Ret, F>(
+    conn: &RawConnection,
+    fn_name: &str,
+    deterministic: bool,
+    mut f: F,
+) -> QueryResult<()>
+where
+    F: FnMut() -> Ret + std::panic::UnwindSafe + Send + 'static,
+    Ret: ToSql<RetSqlType, Sqlite>,
+    Sqlite: HasSqlType<RetSqlType>,
+{
+    conn.register_sql_function(fn_name, 0, deterministic, move |_, _| {
+        let result = f();
+        process_sql_function_result::<RetSqlType, Ret>(result)
+    })?;
+    Ok(())
+}
+
 pub fn register_aggregate<ArgsSqlType, RetSqlType, Args, Ret, A>(
     conn: &RawConnection,
     fn_name: &str,
@@ -83,7 +101,8 @@ where
     Ret: ToSql<RetSqlType, Sqlite>,
     Sqlite: HasSqlType<RetSqlType>,
 {
-    let mut buf = Output::new(Vec::new(), &());
+    let mut metadata_lookup = ();
+    let mut buf = Output::new(Vec::new(), &mut metadata_lookup);
     let is_null = result.to_sql(&mut buf).map_err(Error::SerializationError)?;
 
     let bytes = if let IsNull::Yes = is_null {
@@ -93,7 +112,7 @@ where
     };
 
     Ok(SerializedValue {
-        ty: Sqlite::metadata(&()),
+        ty: Sqlite::metadata(&mut ()),
         data: bytes,
     })
 }

@@ -62,8 +62,6 @@ fn main() {
     }
 }
 
-// https://github.com/rust-lang-nursery/rust-clippy/issues/2927#issuecomment-405705595
-#[allow(clippy::similar_names)]
 fn run_migration_command(
     matches: &ArgMatches,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
@@ -198,7 +196,7 @@ fn migrations_dir_from_cli(matches: &ArgMatches) -> Option<PathBuf> {
 }
 
 fn run_migrations_with_output<Conn, DB>(
-    conn: &Conn,
+    conn: &mut Conn,
     migrations: FileBasedMigrations,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
 where
@@ -211,7 +209,7 @@ where
 }
 
 fn revert_all_migrations_with_output<Conn, DB>(
-    conn: &Conn,
+    conn: &mut Conn,
     migrations: FileBasedMigrations,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
 where
@@ -224,7 +222,7 @@ where
 }
 
 fn revert_migration_with_output<Conn, DB>(
-    conn: &Conn,
+    conn: &mut Conn,
     migrations: FileBasedMigrations,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
 where
@@ -237,7 +235,7 @@ where
 }
 
 fn list_migrations<Conn, DB>(
-    conn: &Conn,
+    conn: &mut Conn,
     migrations: FileBasedMigrations,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>>
 where
@@ -416,14 +414,15 @@ fn search_for_directory_containing_file(path: &Path, file: &str) -> DatabaseResu
 /// if the `--number` argument is used.
 /// Migrations are performed in a transaction. If either part fails,
 /// the transaction is not committed.
-fn redo_migrations<Conn, DB>(conn: &Conn, migrations_dir: FileBasedMigrations, args: &ArgMatches)
-where
+fn redo_migrations<Conn, DB>(
+    conn: &mut Conn,
+    migrations_dir: FileBasedMigrations,
+    args: &ArgMatches,
+) where
     DB: Backend,
     Conn: MigrationHarness<DB> + Connection<Backend = DB> + 'static,
 {
-    let harness = HarnessWithOutput::write_to_stdout(conn);
-
-    let migrations_inner = || -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let migrations_inner = |harness: &mut HarnessWithOutput<Conn, _>| -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let reverted_versions = if args.is_present("REDO_ALL") {
             harness.revert_all_migrations(migrations_dir.clone())?
         } else {
@@ -479,10 +478,11 @@ where
     };
 
     if should_redo_migration_in_transaction(conn) {
-        conn.transaction(migrations_inner)
+        conn.transaction(|conn| migrations_inner(&mut HarnessWithOutput::write_to_stdout(conn)))
             .unwrap_or_else(handle_error);
     } else {
-        migrations_inner().unwrap_or_else(handle_error);
+        migrations_inner(&mut HarnessWithOutput::write_to_stdout(conn))
+            .unwrap_or_else(handle_error);
     }
 }
 
@@ -560,6 +560,10 @@ fn run_infer_schema(matches: &ArgMatches) -> Result<(), Box<dyn Error + Send + S
     if let Some(types) = matches.values_of("import-types") {
         let types = types.map(String::from).collect();
         config.import_types = Some(types);
+    }
+
+    if matches.is_present("generate-custom-type-definitions") {
+        config.generate_missing_sql_type_definitions = Some(false);
     }
 
     run_print_schema(&database_url, &config, &mut stdout())?;

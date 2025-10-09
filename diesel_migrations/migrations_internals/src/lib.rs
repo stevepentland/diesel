@@ -1,5 +1,4 @@
 // Built-in Lints
-#![deny(warnings, missing_debug_implementations, missing_copy_implementations)]
 // Clippy lints
 #![allow(
     clippy::map_unwrap_or,
@@ -9,7 +8,6 @@
 #![warn(
     clippy::unwrap_used,
     clippy::print_stdout,
-    clippy::wrong_pub_self_convention,
     clippy::mut_mut,
     clippy::non_ascii_literal,
     clippy::similar_names,
@@ -17,9 +15,12 @@
     clippy::enum_glob_use,
     clippy::if_not_else,
     clippy::items_after_statements,
-    clippy::used_underscore_binding
+    clippy::used_underscore_binding,
+    missing_debug_implementations,
+    missing_copy_implementations
 )]
 
+use std::ffi::OsString;
 use std::fs::{DirEntry, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -59,53 +60,44 @@ pub fn search_for_migrations_directory(path: &Path) -> Option<PathBuf> {
     if migration_path.is_dir() {
         Some(migration_path)
     } else {
-        path.parent()
-            .and_then(|p| search_for_migrations_directory(p))
+        path.parent().and_then(search_for_migrations_directory)
     }
 }
 
 pub fn valid_sql_migration_directory(path: &Path) -> bool {
-    file_names(path)
-        .map(|files| files.contains(&"down.sql".into()) && files.contains(&"up.sql".into()))
-        .unwrap_or(false)
+    file_names(path).is_ok_and(|files| files.iter().any(|f| f == "up.sql"))
 }
 
 pub fn version_from_string(path: &str) -> Option<String> {
     path.split('_').next().map(|s| s.replace('-', ""))
 }
 
-pub fn file_names(path: &Path) -> Result<Vec<String>, std::io::Error> {
+fn file_names(path: &Path) -> Result<Vec<OsString>, std::io::Error> {
     path.read_dir()?
         .filter_map(|entry| match entry {
             Ok(entry) if entry.file_name().to_string_lossy().starts_with('.') => None,
-            Ok(entry) => Some(Ok(entry.file_name().to_string_lossy().into_owned())),
+            Ok(entry) => Some(Ok(entry.file_name())),
             Err(e) => Some(Err(e)),
         })
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub fn migrations_directories<'a>(
-    path: &'a Path,
-) -> impl Iterator<Item = Result<DirEntry, std::io::Error>> + 'a {
-    path.read_dir()
-        .into_iter()
-        .flatten()
-        .filter_map(move |entry| {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => return Some(Err(e)),
-            };
-            let metadata = match entry.metadata() {
-                Ok(m) => m,
-                Err(e) => return Some(Err(e)),
-            };
-            if metadata.is_file() {
-                return None;
-            }
-            if entry.file_name().to_string_lossy().starts_with('.') {
-                None
-            } else {
-                Some(Ok(entry))
-            }
-        })
+pub fn migrations_directories(
+    path: &'_ Path,
+) -> Result<impl Iterator<Item = Result<DirEntry, std::io::Error>> + '_, std::io::Error> {
+    Ok(path.read_dir()?.filter_map(|entry_res| {
+        entry_res
+            .and_then(|entry| {
+                Ok(
+                    if entry.metadata()?.is_file()
+                        || entry.file_name().to_string_lossy().starts_with('.')
+                    {
+                        None
+                    } else {
+                        Some(entry)
+                    },
+                )
+            })
+            .transpose()
+    }))
 }

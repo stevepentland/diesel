@@ -1,17 +1,16 @@
 // Built-in Lints
-#![deny(warnings, missing_copy_implementations)]
 // Clippy lints
 #![allow(clippy::needless_pass_by_value, clippy::map_unwrap_or)]
 #![warn(
     missing_docs,
-    clippy::wrong_pub_self_convention,
     clippy::mut_mut,
     clippy::non_ascii_literal,
     clippy::similar_names,
     clippy::unicode_not_nfc,
     clippy::if_not_else,
     clippy::items_after_statements,
-    clippy::used_underscore_binding
+    clippy::used_underscore_binding,
+    missing_copy_implementations
 )]
 //! Provides functions for maintaining database schema.
 //!
@@ -33,7 +32,6 @@
 //! Migrations can either be run with the CLI or embedded into the compiled application
 //! and executed with code, for example right after establishing a database connection.
 //! For more information, consult the [`embed_migrations!`] macro.
-//!
 
 mod embedded_migrations;
 mod errors;

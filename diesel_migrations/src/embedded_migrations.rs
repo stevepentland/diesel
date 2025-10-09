@@ -2,12 +2,13 @@ use std::fmt::Display;
 
 use crate::errors::RunMigrationsError;
 use crate::file_based_migrations::{DieselMigrationName, TomlMetadataWrapper};
+use crate::MigrationError;
 use diesel::backend::Backend;
 use diesel::migration::{Migration, MigrationName, MigrationSource, MigrationVersion, Result};
 
 /// A migration source that embeds migrations into the final binary
 ///
-/// This source can be create via the [`embed_migrations!`](crate::embed_migrations!)
+/// This source can be created via the [`embed_migrations!`](crate::embed_migrations!)
 /// at compile time.
 #[allow(missing_copy_implementations)]
 pub struct EmbeddedMigrations {
@@ -34,7 +35,7 @@ impl<DB: Backend> MigrationSource<DB> for EmbeddedMigrations {
 #[doc(hidden)]
 pub struct EmbeddedMigration {
     up: &'static str,
-    down: &'static str,
+    down: Option<&'static str>,
     name: EmbeddedName,
     metadata: TomlMetadataWrapper,
 }
@@ -43,7 +44,7 @@ impl EmbeddedMigration {
     #[doc(hidden)]
     pub const fn new(
         up: &'static str,
-        down: &'static str,
+        down: Option<&'static str>,
         name: EmbeddedName,
         metadata: TomlMetadataWrapper,
     ) -> Self {
@@ -70,7 +71,7 @@ impl EmbeddedName {
 }
 
 impl MigrationName for EmbeddedName {
-    fn version(&self) -> MigrationVersion {
+    fn version(&self) -> MigrationVersion<'_> {
         migrations_internals::version_from_string(self.name)
             .expect(
                 "This name contains a valid version. We checked this at compile time by our macro",
@@ -85,21 +86,24 @@ impl Display for EmbeddedName {
     }
 }
 
-impl<'a, DB: Backend> Migration<DB> for &'a EmbeddedMigration {
-    fn run(&self, conn: &dyn diesel::connection::BoxableConnection<DB>) -> Result<()> {
+impl<DB: Backend> Migration<DB> for &EmbeddedMigration {
+    fn run(&self, conn: &mut dyn diesel::connection::BoxableConnection<DB>) -> Result<()> {
         Ok(conn.batch_execute(self.up).map_err(|e| {
             let name = DieselMigrationName::from_name(self.name.name)
-                .expect("We have a vaild name here, we checked this in `embed_migration!`");
+                .expect("We have a valid name here, we checked this in `embed_migration!`");
             RunMigrationsError::QueryError(name, e)
         })?)
     }
 
-    fn revert(&self, conn: &dyn diesel::connection::BoxableConnection<DB>) -> Result<()> {
-        Ok(conn.batch_execute(self.down).map_err(|e| {
-            let name = DieselMigrationName::from_name(self.name.name)
-                .expect("We have a vaild name here, we checked this in `embed_migration!`");
-            RunMigrationsError::QueryError(name, e)
-        })?)
+    fn revert(&self, conn: &mut dyn diesel::connection::BoxableConnection<DB>) -> Result<()> {
+        match self.down {
+            Some(down) => Ok(conn.batch_execute(down).map_err(|e| {
+                let name = DieselMigrationName::from_name(self.name.name)
+                    .expect("We have a valid name here, we checked this in `embed_migration!`");
+                RunMigrationsError::QueryError(name, e)
+            })?),
+            None => Err(MigrationError::NoMigrationRevertFile.into()),
+        }
     }
 
     fn metadata(&self) -> &dyn diesel::migration::MigrationMetadata {

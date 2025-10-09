@@ -1,7 +1,7 @@
 //! Traits related to relationships between multiple tables.
 //!
 //! Associations in Diesel are always child-to-parent.
-//! You can declare an association between two records with `#[belongs_to]`.
+//! You can declare an association between two records with `#[diesel(belongs_to)]`.
 //! Unlike other ORMs, Diesel has no concept of `has many`
 //!
 //! ```rust
@@ -9,15 +9,15 @@
 //! use schema::{posts, users};
 //!
 //! #[derive(Identifiable, Queryable, PartialEq, Debug)]
-//! #[table_name = "users"]
+//! #[diesel(table_name = users)]
 //! pub struct User {
 //!     id: i32,
 //!     name: String,
 //! }
 //!
 //! #[derive(Identifiable, Queryable, Associations, PartialEq, Debug)]
-//! #[belongs_to(User)]
-//! #[table_name = "posts"]
+//! #[diesel(belongs_to(User))]
+//! #[diesel(table_name = posts)]
 //! pub struct Post {
 //!     id: i32,
 //!     user_id: i32,
@@ -29,23 +29,26 @@
 //! # }
 //! #
 //! # fn run_test() -> QueryResult<()> {
-//! #     let connection = establish_connection();
+//! #     let connection = &mut establish_connection();
 //! #     use self::users::dsl::*;
-//! let user = users.find(2).get_result::<User>(&connection)?;
-//! let users_post = Post::belonging_to(&user)
-//!     .first(&connection)?;
-//! let expected = Post { id: 3, user_id: 2, title: "My first post too".into() };
+//! let user = users.find(2).get_result::<User>(connection)?;
+//! let users_post = Post::belonging_to(&user).first(connection)?;
+//! let expected = Post {
+//!     id: 3,
+//!     user_id: 2,
+//!     title: "My first post too".into(),
+//! };
 //! assert_eq!(expected, users_post);
 //! #     Ok(())
 //! # }
 //! ```
 //!
-//! Note that in addition to the `#[belongs_to]` annotation, we also need to
+//! Note that in addition to the `#[diesel(belongs_to)]` annotation, we also need to
 //! `#[derive(Associations)]`
 //!
-//! `#[belongs_to]` is given the name of the struct that represents the parent.
+//! `#[diesel(belongs_to)]` is given the name of the struct that represents the parent.
 //! Both the parent and child must implement [`Identifiable`].
-//! The struct given to `#[belongs_to]` must be in scope,
+//! The struct given to `#[diesel(belongs_to)]` must be in scope,
 //! so you will need `use some_module::User` if `User` is defined in another module.
 //!
 //! If the parent record is generic over lifetimes, they can be written as `'_`.
@@ -58,15 +61,15 @@
 //! # use std::borrow::Cow;
 //! #
 //! #[derive(Identifiable)]
-//! #[table_name = "users"]
+//! #[diesel(table_name = users)]
 //! pub struct User<'a> {
 //!     id: i32,
 //!     name: Cow<'a, str>,
 //! }
 //!
 //! #[derive(Associations)]
-//! #[belongs_to(parent = "User<'_>")]
-//! #[table_name = "posts"]
+//! #[diesel(belongs_to(User<'_>))]
+//! #[diesel(table_name = posts)]
 //! pub struct Post {
 //!     id: i32,
 //!     user_id: i32,
@@ -79,8 +82,8 @@
 //!
 //! By default, Diesel assumes that your foreign keys will follow the convention `table_name_id`.
 //! If your foreign key has a different name,
-//! you can provide the `foreign_key` argument to `#[belongs_to]`.
-//! For example, `#[belongs_to(Foo, foreign_key = "mykey")]`.
+//! you can provide the `foreign_key` argument to `#[diesel(belongs_to)]`.
+//! For example, `#[diesel(belongs_to(Foo, foreign_key = mykey))]`.
 //!
 //! Associated data is typically loaded in multiple queries (one query per table).
 //! This is usually more efficient than using a join,
@@ -106,7 +109,7 @@
 //! # }
 //! #
 //! # #[derive(Debug, PartialEq, Identifiable, Queryable, Associations)]
-//! # #[belongs_to(User)]
+//! # #[diesel(belongs_to(User))]
 //! # pub struct Post {
 //! #     id: i32,
 //! #     user_id: i32,
@@ -115,15 +118,26 @@
 //! #
 //! # fn main() {
 //! #   use self::users::dsl::*;
-//! #   let connection = establish_connection();
+//! #   let connection = &mut establish_connection();
 //! #
-//! let user = users.find(1).first::<User>(&connection).expect("Error loading user");
+//! let user = users
+//!     .find(1)
+//!     .first::<User>(connection)
+//!     .expect("Error loading user");
 //! let post_list = Post::belonging_to(&user)
-//!     .load::<Post>(&connection)
+//!     .load::<Post>(connection)
 //!     .expect("Error loading posts");
 //! let expected = vec![
-//!     Post { id: 1, user_id: 1, title: "My first post".to_string() },
-//!     Post { id: 2, user_id: 1, title: "About Rust".to_string() },
+//!     Post {
+//!         id: 1,
+//!         user_id: 1,
+//!         title: "My first post".to_string(),
+//!     },
+//!     Post {
+//!         id: 2,
+//!         user_id: 1,
+//!         title: "About Rust".to_string(),
+//!     },
 //! ];
 //!
 //! assert_eq!(post_list, expected);
@@ -160,7 +174,7 @@
 //! #
 //! # #[derive(Debug, PartialEq)]
 //! # #[derive(Identifiable, Queryable, Associations)]
-//! # #[belongs_to(User)]
+//! # #[diesel(belongs_to(User))]
 //! # pub struct Post {
 //! #     id: i32,
 //! #     user_id: i32,
@@ -172,22 +186,25 @@
 //! # }
 //! #
 //! # fn run_test() -> QueryResult<()> {
-//! #     let connection = establish_connection();
+//! #     let connection = &mut establish_connection();
 //! #     use self::users::dsl::*;
 //! #     use self::posts::dsl::{posts, title};
-//! let sean = users.filter(name.eq("Sean")).first::<User>(&connection)?;
-//! let tess = users.filter(name.eq("Tess")).first::<User>(&connection)?;
+//! let sean = users.filter(name.eq("Sean")).first::<User>(connection)?;
+//! let tess = users.filter(name.eq("Tess")).first::<User>(connection)?;
 //!
 //! let seans_posts = Post::belonging_to(&sean)
 //!     .select(title)
-//!     .load::<String>(&connection)?;
+//!     .load::<String>(connection)?;
 //! assert_eq!(vec!["My first post", "About Rust"], seans_posts);
 //!
 //! // A vec or slice can be passed as well
 //! let more_posts = Post::belonging_to(&vec![sean, tess])
 //!     .select(title)
-//!     .load::<String>(&connection)?;
-//! assert_eq!(vec!["My first post", "About Rust", "My first post too"], more_posts);
+//!     .load::<String>(connection)?;
+//! assert_eq!(
+//!     vec!["My first post", "About Rust", "My first post too"],
+//!     more_posts
+//! );
 //! #     Ok(())
 //! # }
 //! ```
@@ -214,7 +231,7 @@
 //! #
 //! # #[derive(Debug, PartialEq)]
 //! # #[derive(Identifiable, Queryable, Associations)]
-//! # #[belongs_to(User)]
+//! # #[diesel(belongs_to(User))]
 //! # pub struct Post {
 //! #     id: i32,
 //! #     user_id: i32,
@@ -226,26 +243,42 @@
 //! # }
 //! #
 //! # fn run_test() -> QueryResult<()> {
-//! #     let connection = establish_connection();
-//! let users = users::table.load::<User>(&connection)?;
+//! #     let connection = &mut establish_connection();
+//! let users = users::table.load::<User>(connection)?;
 //! let posts = Post::belonging_to(&users)
-//!     .load::<Post>(&connection)?
+//!     .load::<Post>(connection)?
 //!     .grouped_by(&users);
 //! let data = users.into_iter().zip(posts).collect::<Vec<_>>();
 //!
 //! let expected_data = vec![
 //!     (
-//!         User { id: 1, name: "Sean".into() },
+//!         User {
+//!             id: 1,
+//!             name: "Sean".into(),
+//!         },
 //!         vec![
-//!             Post { id: 1, user_id: 1, title: "My first post".into() },
-//!             Post { id: 2, user_id: 1, title: "About Rust".into() },
+//!             Post {
+//!                 id: 1,
+//!                 user_id: 1,
+//!                 title: "My first post".into(),
+//!             },
+//!             Post {
+//!                 id: 2,
+//!                 user_id: 1,
+//!                 title: "About Rust".into(),
+//!             },
 //!         ],
 //!     ),
 //!     (
-//!         User { id: 2, name: "Tess".into() },
-//!         vec![
-//!             Post { id: 3, user_id: 2, title: "My first post too".into() },
-//!         ],
+//!         User {
+//!             id: 2,
+//!             name: "Tess".into(),
+//!         },
+//!         vec![Post {
+//!             id: 3,
+//!             user_id: 2,
+//!             title: "My first post too".into(),
+//!         }],
 //!     ),
 //! ];
 //!
@@ -274,7 +307,7 @@
 //! # }
 //! #
 //! # #[derive(Debug, PartialEq, Identifiable, Queryable, Associations)]
-//! # #[belongs_to(User)]
+//! # #[diesel(belongs_to(User))]
 //! # pub struct Post {
 //! #     id: i32,
 //! #     user_id: i32,
@@ -282,7 +315,7 @@
 //! # }
 //! #
 //! # #[derive(Debug, PartialEq, Identifiable, Queryable, Associations)]
-//! # #[belongs_to(Post)]
+//! # #[diesel(belongs_to(Post))]
 //! # pub struct Comment {
 //! #     id: i32,
 //! #     post_id: i32,
@@ -290,51 +323,73 @@
 //! # }
 //! #
 //! # fn main() {
-//! #   let connection = establish_connection();
+//! #   let connection = &mut establish_connection();
 //! #
-//! let users: Vec<User> = users::table.load::<User>(&connection)
+//! let users: Vec<User> = users::table
+//!     .load::<User>(connection)
 //!     .expect("error loading users");
 //! let posts: Vec<Post> = Post::belonging_to(&users)
-//!     .load::<Post>(&connection)
+//!     .load::<Post>(connection)
 //!     .expect("error loading posts");
 //! let comments: Vec<Comment> = Comment::belonging_to(&posts)
-//!     .load::<Comment>(&connection)
+//!     .load::<Comment>(connection)
 //!     .expect("Error loading comments");
 //! let grouped_comments: Vec<Vec<Comment>> = comments.grouped_by(&posts);
-//! let posts_and_comments: Vec<Vec<(Post, Vec<Comment>)>> = posts
-//!     .into_iter()
-//!     .zip(grouped_comments)
-//!     .grouped_by(&users);
-//! let result: Vec<(User, Vec<(Post, Vec<Comment>)>)> = users
-//!     .into_iter()
-//!     .zip(posts_and_comments)
-//!     .collect();
+//! let posts_and_comments: Vec<Vec<(Post, Vec<Comment>)>> =
+//!     posts.into_iter().zip(grouped_comments).grouped_by(&users);
+//! let result: Vec<(User, Vec<(Post, Vec<Comment>)>)> =
+//!     users.into_iter().zip(posts_and_comments).collect();
 //! let expected = vec![
 //!     (
-//!         User { id: 1, name: "Sean".to_string() },
+//!         User {
+//!             id: 1,
+//!             name: "Sean".to_string(),
+//!         },
 //!         vec![
 //!             (
-//!                 Post { id: 1, user_id: 1, title: "My first post".to_string() },
-//!                 vec![ Comment { id: 1, post_id: 1, body: "Great post".to_string() } ]
+//!                 Post {
+//!                     id: 1,
+//!                     user_id: 1,
+//!                     title: "My first post".to_string(),
+//!                 },
+//!                 vec![Comment {
+//!                     id: 1,
+//!                     post_id: 1,
+//!                     body: "Great post".to_string(),
+//!                 }],
 //!             ),
 //!             (
-//!                 Post { id: 2, user_id: 1, title: "About Rust".to_string() },
-//!                 vec![
-//!                     Comment { id: 2, post_id: 2, body: "Yay! I am learning Rust".to_string() }
-//!                 ]
-//!
-//!             )
-//!         ]
+//!                 Post {
+//!                     id: 2,
+//!                     user_id: 1,
+//!                     title: "About Rust".to_string(),
+//!                 },
+//!                 vec![Comment {
+//!                     id: 2,
+//!                     post_id: 2,
+//!                     body: "Yay! I am learning Rust".to_string(),
+//!                 }],
+//!             ),
+//!         ],
 //!     ),
 //!     (
-//!         User { id: 2, name: "Tess".to_string() },
-//!         vec![
-//!             (
-//!                 Post { id: 3, user_id: 2, title: "My first post too".to_string() },
-//!                 vec![ Comment { id: 3, post_id: 3, body: "I enjoyed your post".to_string() } ]
-//!             )
-//!         ]
-//!     )
+//!         User {
+//!             id: 2,
+//!             name: "Tess".to_string(),
+//!         },
+//!         vec![(
+//!             Post {
+//!                 id: 3,
+//!                 user_id: 2,
+//!                 title: "My first post too".to_string(),
+//!             },
+//!             vec![Comment {
+//!                 id: 3,
+//!                 post_id: 3,
+//!                 body: "I enjoyed your post".to_string(),
+//!             }],
+//!         )],
+//!     ),
 //! ];
 //!
 //! assert_eq!(result, expected);
@@ -352,7 +407,7 @@ use std::hash::Hash;
 
 use crate::query_source::Table;
 
-pub use self::belongs_to::{BelongsTo, GroupedBy};
+pub use self::belongs_to::{BelongsTo, GroupedBy, TryGroupedByError};
 
 #[doc(inline)]
 pub use diesel_derives::Associations;
@@ -369,7 +424,7 @@ pub trait HasTable {
     fn table() -> Self::Table;
 }
 
-impl<'a, T: HasTable> HasTable for &'a T {
+impl<T: HasTable> HasTable for &T {
     type Table = T::Table;
 
     fn table() -> Self::Table {
@@ -386,7 +441,6 @@ impl<'a, T: HasTable> HasTable for &'a T {
 ///
 /// This trait is usually implemented on a reference to a struct,
 /// not on the struct itself. It can be [derived](derive@Identifiable).
-///
 pub trait Identifiable: HasTable {
     /// The type of this struct's identifier.
     ///

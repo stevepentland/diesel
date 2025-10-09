@@ -39,11 +39,11 @@
 //! #
 //! # fn result_main() -> QueryResult<()> {
 //! #
-//! # let conn = establish_connection();
+//! # let conn = &mut establish_connection();
 //! #
 //! # // Create some example data by using typical SQL statements.
-//! # connection_setup::create_user_table(&conn);
-//! # sql_query("INSERT INTO users (name) VALUES ('Sean'), ('Tess')").execute(&conn)?;
+//! # connection_setup::create_user_table(conn);
+//! # sql_query("INSERT INTO users (name) VALUES ('Sean'), ('Tess')").execute(conn)?;
 //! #
 //! // Use diesel-dynamic-schema to create a table and columns.
 //! let users = table("users");
@@ -54,7 +54,7 @@
 //! let results = users
 //!     .select((id, name))
 //!     .filter(name.eq("Sean"))
-//!     .load::<(i32, String)>(&conn)?;
+//!     .load::<(i32, String)>(conn)?;
 //!
 //! # assert_eq!(results.len(), 1);
 //! # assert_eq!(results[0].1, "Sean");
@@ -71,13 +71,12 @@
 //!
 //! ## Getting help
 //!
-//! If you run into problems, Diesel has a very active Gitter room.
+//! If you run into problems, Diesel has a very active discussion forum.
 //! You can come ask for help at
-//! [gitter.im/diesel-rs/diesel](https://gitter.im/diesel-rs/diesel)
+//! [github.com/diesel-rs/diesel/discussions](https://github.com/diesel-rs/diesel/discussions)
 
 // Built-in Lints
 #![warn(missing_docs)]
-#![deny(warnings)]
 
 mod column;
 mod dummy_expression;

@@ -14,14 +14,28 @@ use crate::errors::{MigrationError, RunMigrationsError};
 
 /// A migration source based on a migration directory in the file system
 ///
-/// A valid migration directroy contains a sub folder per migration.
+/// A valid migration directory contains a sub folder per migration.
 /// Each migration folder contains a `up.sql` file containing the migration itself
-/// and a `down.sql` file containing the nessesary SQL to revert the migration.
-/// Additionaly each folder can contain a `metadata.toml` file controling how the
-/// individual migration should be handled by the migration harness.
+/// and a `down.sql` file containing the necessary SQL to revert the migration.
 ///
 /// To embed an existing migration folder into the final binary see
 /// [`embed_migrations!`](crate::embed_migrations!).
+///
+/// ## Transactions
+///
+/// Each migration folder can additionally contain a `metadata.toml` file,
+/// controlling how the individual migration should be handled by the migration
+/// harness.
+///
+/// By default, each migration is run inside a dedicated transaction block.
+/// If the metadata file contains `run_in_transaction = false`, then this
+/// behavior will be disabled.
+///
+/// **Important:** If you see "cannot run inside a transaction block" errors
+/// despite having set `run_in_transaction = false`, then your migration likely
+/// contains multiple instructions, which some databases automatically wrap in
+/// a transaction block. In this case we recommend splitting the migration into
+/// multiple migrations.
 ///
 /// ## Example
 ///
@@ -33,6 +47,7 @@ use crate::errors::{MigrationError, RunMigrationsError};
 /// - 20160107082941_create_posts
 ///     - up.sql
 ///     - down.sql
+///     - metadata.toml
 /// ```
 ///
 /// ```sql
@@ -65,15 +80,15 @@ use crate::errors::{MigrationError, RunMigrationsError};
 /// ```
 ///
 /// ```toml
-/// # 20160107082941_create_posts/metadata.toml
+/// ## 20160107082941_create_posts/metadata.toml
 ///
-/// # specifices if a migration is executed inside a
-/// # transaction or not. This configuration is optional
-/// # by default all migrations are run in transactions.
-/// #
-/// # For certain types of migrations, like creating an
-/// # index onto a existing column, it is required
-/// # to set this to false
+/// ## specifies if a migration is executed inside a
+/// ## transaction or not. This configuration is optional
+/// ## by default all migrations are run in transactions.
+/// ##
+/// ## For certain types of migrations, like creating an
+/// ## index onto a existing column, it is required
+/// ## to set this to false
 /// run_in_transaction = true
 /// ```
 #[derive(Clone)]
@@ -86,7 +101,7 @@ impl FileBasedMigrations {
     ///
     /// This methods fails if the path passed as argument is no valid migration directory
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, MigrationError> {
-        for dir in migrations_directories(path.as_ref()) {
+        for dir in migrations_directories(path.as_ref())? {
             let path = dir?.path();
             if !migrations_internals::valid_sql_migration_directory(&path) {
                 return Err(MigrationError::UnknownMigrationFormat(path));
@@ -97,17 +112,17 @@ impl FileBasedMigrations {
         })
     }
 
-    /// Create a new file based migration source by searching the migration diretcory
+    /// Create a new file based migration source by searching the migration directory
     ///
     /// This method looks in the current and all parent directories for a folder named
     /// `migrations`
     ///
     /// This method fails if no valid migration directory is found
     pub fn find_migrations_directory() -> Result<Self, MigrationError> {
-        Self::find_migrations_directory_in_path(&std::env::current_dir()?)
+        Self::find_migrations_directory_in_path(std::env::current_dir()?.as_path())
     }
 
-    /// Create a new file based migration source by searching a give path for the migration
+    /// Create a new file based migration source by searching a given path for the migration
     /// directory
     ///
     /// This method looks in the passed directory and all parent directories for a folder
@@ -118,7 +133,7 @@ impl FileBasedMigrations {
         path: impl AsRef<Path>,
     ) -> Result<Self, MigrationError> {
         let migrations_directory = search_for_migrations_directory(path.as_ref())?;
-        Self::from_path(&migrations_directory)
+        Self::from_path(migrations_directory.as_path())
     }
 
     #[doc(hidden)]
@@ -132,21 +147,21 @@ fn search_for_migrations_directory(path: &Path) -> Result<PathBuf, MigrationErro
         .ok_or_else(|| MigrationError::MigrationDirectoryNotFound(path.to_path_buf()))
 }
 
-fn migrations_directories<'a>(
-    path: &'a Path,
-) -> impl Iterator<Item = Result<DirEntry, MigrationError>> + 'a {
-    migrations_internals::migrations_directories(path).map(move |e| e.map_err(Into::into))
+fn migrations_directories(
+    path: &'_ Path,
+) -> Result<impl Iterator<Item = Result<DirEntry, MigrationError>> + '_, MigrationError> {
+    Ok(migrations_internals::migrations_directories(path)?.map(move |e| e.map_err(Into::into)))
 }
 
-fn migrations_in_directory<'a, DB: Backend>(
-    path: &'a Path,
-) -> impl Iterator<Item = Result<SqlFileMigration, MigrationError>> + 'a {
-    migrations_directories(path).map(|entry| SqlFileMigration::from_path(&entry?.path()))
+fn migrations_in_directory(
+    path: &'_ Path,
+) -> Result<impl Iterator<Item = Result<SqlFileMigration, MigrationError>> + '_, MigrationError> {
+    Ok(migrations_directories(path)?.map(|entry| SqlFileMigration::from_path(&entry?.path())))
 }
 
 impl<DB: Backend> MigrationSource<DB> for FileBasedMigrations {
     fn migrations(&self) -> migration::Result<Vec<Box<dyn Migration<DB>>>> {
-        migrations_in_directory::<DB>(&self.base_path)
+        migrations_in_directory(&self.base_path)?
             .map(|r| Ok(Box::new(r?) as Box<dyn Migration<DB>>))
             .collect()
     }
@@ -176,7 +191,7 @@ impl SqlFileMigration {
 }
 
 impl<DB: Backend> Migration<DB> for SqlFileMigration {
-    fn run(&self, conn: &dyn BoxableConnection<DB>) -> migration::Result<()> {
+    fn run(&self, conn: &mut dyn BoxableConnection<DB>) -> migration::Result<()> {
         Ok(run_sql_from_file(
             conn,
             &self.base_path.join("up.sql"),
@@ -184,12 +199,13 @@ impl<DB: Backend> Migration<DB> for SqlFileMigration {
         )?)
     }
 
-    fn revert(&self, conn: &dyn BoxableConnection<DB>) -> migration::Result<()> {
-        Ok(run_sql_from_file(
-            conn,
-            &self.base_path.join("down.sql"),
-            &self.name,
-        )?)
+    fn revert(&self, conn: &mut dyn BoxableConnection<DB>) -> migration::Result<()> {
+        let down_path = self.base_path.join("down.sql");
+        if matches!(down_path.metadata(), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+            Err(MigrationError::NoMigrationRevertFile.into())
+        } else {
+            Ok(run_sql_from_file(conn, &down_path, &self.name)?)
+        }
     }
 
     fn metadata(&self) -> &dyn MigrationMetadata {
@@ -201,7 +217,7 @@ impl<DB: Backend> Migration<DB> for SqlFileMigration {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DieselMigrationName {
     name: String,
     version: MigrationVersion<'static>,
@@ -226,7 +242,7 @@ impl DieselMigrationName {
     }
 
     pub(crate) fn from_name(name: &str) -> Result<Self, MigrationError> {
-        let version = migrations_internals::version_from_string(&name)
+        let version = migrations_internals::version_from_string(name)
             .ok_or_else(|| MigrationError::UnknownMigrationFormat(PathBuf::from(name)))?;
         Ok(Self {
             name: name.to_owned(),
@@ -236,7 +252,7 @@ impl DieselMigrationName {
 }
 
 impl MigrationName for DieselMigrationName {
-    fn version(&self) -> MigrationVersion {
+    fn version(&self) -> MigrationVersion<'_> {
         self.version.as_owned()
     }
 }
@@ -265,7 +281,7 @@ impl MigrationMetadata for TomlMetadataWrapper {
 }
 
 fn run_sql_from_file<DB: Backend>(
-    conn: &dyn BoxableConnection<DB>,
+    conn: &mut dyn BoxableConnection<DB>,
     path: &Path,
     name: &DieselMigrationName,
 ) -> Result<(), RunMigrationsError> {
@@ -335,15 +351,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "sqlite")]
-    type Backend = diesel::sqlite::Sqlite;
-
-    #[cfg(feature = "postgres")]
-    type Backend = diesel::pg::Pg;
-
-    #[cfg(feature = "mysql")]
-    type Backend = diesel::mysql::Mysql;
-
     #[test]
     fn migration_paths_in_directory_ignores_files() {
         let dir = Builder::new().prefix("diesel").tempdir().unwrap();
@@ -351,10 +358,11 @@ mod tests {
         let migrations_path = temp_path.join("migrations");
         let file_path = migrations_path.join("README.md");
 
-        fs::create_dir(&migrations_path).unwrap();
-        fs::File::create(&file_path).unwrap();
+        fs::create_dir(migrations_path.as_path()).unwrap();
+        fs::File::create(file_path.as_path()).unwrap();
 
-        let migrations = migrations_in_directory::<Backend>(&migrations_path)
+        let migrations = migrations_in_directory(&migrations_path)
+            .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
@@ -368,10 +376,11 @@ mod tests {
         let migrations_path = temp_path.join("migrations");
         let dot_path = migrations_path.join(".hidden_dir");
 
-        fs::create_dir(&migrations_path).unwrap();
-        fs::create_dir(&dot_path).unwrap();
+        fs::create_dir(migrations_path.as_path()).unwrap();
+        fs::create_dir(dot_path.as_path()).unwrap();
 
-        let migrations = migrations_in_directory::<Backend>(&migrations_path)
+        let migrations = migrations_in_directory(&migrations_path)
+            .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 

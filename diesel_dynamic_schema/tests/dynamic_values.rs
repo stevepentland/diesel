@@ -17,9 +17,9 @@ impl FromSql<Any, diesel::pg::Pg> for MyDynamicValue {
         use diesel::pg::Pg;
         use std::num::NonZeroU32;
 
-        const VARCHAR_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(1043) };
-        const TEXT_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(25) };
-        const INTEGER_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(23) };
+        const VARCHAR_OID: NonZeroU32 = NonZeroU32::new(1043).unwrap();
+        const TEXT_OID: NonZeroU32 = NonZeroU32::new(25).unwrap();
+        const INTEGER_OID: NonZeroU32 = NonZeroU32::new(23).unwrap();
 
         match value.get_oid() {
             VARCHAR_OID | TEXT_OID => {
@@ -28,7 +28,7 @@ impl FromSql<Any, diesel::pg::Pg> for MyDynamicValue {
             }
             INTEGER_OID => <i32 as FromSql<diesel::sql_types::Integer, Pg>>::from_sql(value)
                 .map(MyDynamicValue::Integer),
-            e => Err(format!("Unknown type: {}", e).into()),
+            e => Err(format!("Unknown type: {e}").into()),
         }
     }
 }
@@ -62,17 +62,17 @@ impl FromSql<Any, diesel::mysql::Mysql> for MyDynamicValue {
             }
             MysqlType::Long => <i32 as FromSql<diesel::sql_types::Integer, Mysql>>::from_sql(value)
                 .map(MyDynamicValue::Integer),
-            e => Err(format!("Unknown data type: {:?}", e).into()),
+            e => Err(format!("Unknown data type: {e:?}").into()),
         }
     }
 }
 
 #[test]
 fn dynamic_query() {
-    let connection = super::establish_connection();
-    crate::create_user_table(&connection);
+    let connection = &mut super::establish_connection();
+    crate::create_user_table(connection);
     sql_query("INSERT INTO users (name, hair_color) VALUES ('Sean', 'black'), ('Tess', 'black')")
-        .execute(&connection)
+        .execute(connection)
         .unwrap();
 
     let users = diesel_dynamic_schema::table("users");
@@ -87,7 +87,7 @@ fn dynamic_query() {
     select.add_field(hair_color);
 
     let actual_data: Vec<DynamicRow<NamedField<MyDynamicValue>>> =
-        users.select(select).load(&connection).unwrap();
+        users.select(select).load(connection).unwrap();
 
     assert_eq!(
         actual_data[0]["name"],
@@ -141,7 +141,7 @@ fn dynamic_query() {
     select.add_field(hair_color);
 
     let actual_data: Vec<DynamicRow<MyDynamicValue>> =
-        users.select(select).load(&connection).unwrap();
+        users.select(select).load(connection).unwrap();
 
     assert_eq!(actual_data[0][1], MyDynamicValue::String("Sean".into()));
     assert_eq!(actual_data[1][1], MyDynamicValue::String("Tess".into()));
@@ -153,10 +153,10 @@ fn dynamic_query() {
 fn mixed_value_query() {
     use diesel::dsl::sql;
 
-    let connection = crate::establish_connection();
-    crate::create_user_table(&connection);
+    let connection = &mut crate::establish_connection();
+    crate::create_user_table(connection);
     sql_query("INSERT INTO users (id, name, hair_color) VALUES (42, 'Sean', 'black'), (43, 'Tess', 'black')")
-        .execute(&connection)
+        .execute(connection)
         .unwrap();
 
     let users = diesel_dynamic_schema::table("users");
@@ -164,7 +164,7 @@ fn mixed_value_query() {
 
     let (id, row) = users
         .select((id, sql::<Untyped>("name, hair_color")))
-        .first::<(i32, DynamicRow<NamedField<MyDynamicValue>>)>(&connection)
+        .first::<(i32, DynamicRow<NamedField<MyDynamicValue>>)>(connection)
         .unwrap();
 
     assert_eq!(id, 42);
@@ -176,17 +176,17 @@ fn mixed_value_query() {
 fn nullable_dynamic_value() {
     use diesel::dsl::sql;
 
-    let connection = crate::establish_connection();
-    crate::create_user_table(&connection);
+    let connection = &mut crate::establish_connection();
+    crate::create_user_table(connection);
     sql_query("INSERT INTO users (name, hair_color) VALUES ('Sean', 'dark'), ('Tess', NULL)")
-        .execute(&connection)
+        .execute(connection)
         .unwrap();
 
     let users = diesel_dynamic_schema::table("users");
 
     let result = users
         .select(sql::<Untyped>("hair_color"))
-        .load::<DynamicRow<Option<MyDynamicValue>>>(&connection)
+        .load::<DynamicRow<Option<MyDynamicValue>>>(connection)
         .unwrap();
 
     assert_eq!(result[0][0], Some(MyDynamicValue::String("dark".into())));
@@ -194,7 +194,7 @@ fn nullable_dynamic_value() {
 
     let result = users
         .select(sql::<Untyped>("hair_color"))
-        .load::<DynamicRow<NamedField<Option<MyDynamicValue>>>>(&connection)
+        .load::<DynamicRow<NamedField<Option<MyDynamicValue>>>>(connection)
         .unwrap();
 
     assert_eq!(

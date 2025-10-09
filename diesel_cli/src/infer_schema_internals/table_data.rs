@@ -95,7 +95,7 @@ pub struct TableData {
     pub name: TableName,
     pub primary_key: Vec<String>,
     pub column_data: Vec<ColumnDefinition>,
-    pub docs: String,
+    pub comment: Option<String>,
 }
 
 mod serde_impls {
@@ -113,7 +113,7 @@ mod serde_impls {
         {
             struct TableNameVisitor;
 
-            impl<'de> Visitor<'de> for TableNameVisitor {
+            impl Visitor<'_> for TableNameVisitor {
                 type Value = TableName;
 
                 fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

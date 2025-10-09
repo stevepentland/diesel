@@ -1,10 +1,49 @@
-error[E0277]: the trait bound `Sqlite: SupportsDefaultKeyword` is not satisfied
-  --> $DIR/upsert_with_multiple_values_not_supported_on_sqlite.rs:17:10
-   |
-17 |         .execute(&connection);
-   |          ^^^^^^^ the trait `SupportsDefaultKeyword` is not implemented for `Sqlite`
-   |
-   = note: required because of the requirements on the impl of `QueryFragment<Sqlite>` for `OwnedBatchInsert<ValuesClause<ColumnInsertValue<columns::id, diesel::expression::bound::Bound<diesel::sql_types::Integer, i32>>, users::table>, users::table>`
-   = note: 2 redundant requirements hidden
-   = note: required because of the requirements on the impl of `QueryFragment<Sqlite>` for `InsertStatement<users::table, diesel::query_builder::upsert::on_conflict_clause::OnConflictValues<OwnedBatchInsert<ValuesClause<ColumnInsertValue<columns::id, diesel::expression::bound::Bound<diesel::sql_types::Integer, i32>>, users::table>, users::table>, diesel::query_builder::upsert::on_conflict_target::NoConflictTarget, diesel::query_builder::upsert::on_conflict_actions::DoNothing>>`
-   = note: required because of the requirements on the impl of `ExecuteDsl<diesel::SqliteConnection, Sqlite>` for `InsertStatement<users::table, diesel::query_builder::upsert::on_conflict_clause::OnConflictValues<OwnedBatchInsert<ValuesClause<ColumnInsertValue<columns::id, diesel::expression::bound::Bound<diesel::sql_types::Integer, i32>>, users::table>, users::table>, diesel::query_builder::upsert::on_conflict_target::NoConflictTarget, diesel::query_builder::upsert::on_conflict_actions::DoNothing>>`
+error[E0271]: type mismatch resolving `<Sqlite as SqlDialect>::InsertWithDefaultKeyword == IsoSqlDefaultKeyword`
+    --> tests/fail/upsert_with_multiple_values_not_supported_on_sqlite.rs:33:18
+     |
+  LL |         .execute(&mut connection)
+     |          ------- ^^^^^^^^^^^^^^^ expected `IsoSqlDefaultKeyword`, found `DoesNotSupportDefaultKeyword`
+     |          |
+     |          required by a bound introduced by this call
+     |
+     = note: required for `BatchInsert<Vec<ValuesClause<(...,), ...>>, ..., (), false>` to implement `CanInsertInSingleQuery<Sqlite>`
+     = note: 1 redundant requirement hidden
+     = note: required for `OnConflictValues<BatchInsert<Vec<...>, ..., (), false>, ..., ...>` to implement `CanInsertInSingleQuery<Sqlite>`
+     = note: required for `InsertStatement<table, OnConflictValues<..., ..., ...>>` to implement `QueryFragment<Sqlite>`
+     = note: required for `InsertStatement<table, OnConflictValues<..., ..., ...>>` to implement `ExecuteDsl<diesel::SqliteConnection, Sqlite>`
+note: required by a bound in `diesel::RunQueryDsl::execute`
+    --> DIESEL/diesel/diesel/src/query_dsl/mod.rs
+     |
+LL |     fn execute(self, conn: &mut Conn) -> QueryResult<usize>
+     |        ------- required by a bound in this associated function
+...
+LL |         Self: methods::ExecuteDsl<Conn>,
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::execute`
+  
+     
+error[E0277]: `BatchInsert<Vec<ValuesClause<(...,), ...>>, ..., (), false>` is no valid SQL fragment for the `Sqlite` backend
+    --> tests/fail/upsert_with_multiple_values_not_supported_on_sqlite.rs:33:18
+     |
+  LL |         .execute(&mut connection)
+     |          ------- ^^^^^^^^^^^^^^^ unsatisfied trait bound
+     |          |
+     |          required by a bound introduced by this call
+     |
+     = help: the trait `QueryFragment<Sqlite, sqlite::backend::SqliteBatchInsert>` is not implemented for `BatchInsert<Vec<ValuesClause<(...,), ...>>, ..., (), false>`
+     = note: this usually means that the `Sqlite` database system does not support 
+             this SQL syntax
+     = help: the following other types implement trait `QueryFragment<DB, SP>`:
+               `BatchInsert<V, Tab, QId, HAS_STATIC_QUERY_ID>` implements `QueryFragment<DB>`
+               `BatchInsert<Vec<diesel::query_builder::insert_statement::ValuesClause<V, Tab>>, Tab, QId, HAS_STATIC_QUERY_ID>` implements `QueryFragment<DB, PostgresLikeBatchInsertSupport>`
+     = note: required for `BatchInsert<Vec<ValuesClause<(...,), ...>>, ..., (), false>` to implement `QueryFragment<Sqlite>`
+     = note: 3 redundant requirements hidden
+     = note: required for `InsertStatement<table, OnConflictValues<..., ..., ...>>` to implement `QueryFragment<Sqlite>`
+     = note: required for `InsertStatement<table, OnConflictValues<..., ..., ...>>` to implement `ExecuteDsl<diesel::SqliteConnection, Sqlite>`
+note: required by a bound in `diesel::RunQueryDsl::execute`
+    --> DIESEL/diesel/diesel/src/query_dsl/mod.rs
+     |
+LL |     fn execute(self, conn: &mut Conn) -> QueryResult<usize>
+     |        ------- required by a bound in this associated function
+...
+LL |         Self: methods::ExecuteDsl<Conn>,
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `RunQueryDsl::execute`

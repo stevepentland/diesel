@@ -4,23 +4,26 @@
 //! However, if you are writing code specifically to extend Diesel on
 //! SQLite, you may need to work with this module directly.
 
-mod backend;
+pub(crate) mod backend;
 mod connection;
-pub(crate) mod expression;
-mod types;
+pub mod expression;
 
 pub mod query_builder;
 
+mod types;
+
 pub use self::backend::{Sqlite, SqliteType};
+pub use self::connection::SerializedDatabase;
+pub use self::connection::SqliteBindValue;
 pub use self::connection::SqliteConnection;
 pub use self::connection::SqliteValue;
 pub use self::query_builder::SqliteQueryBuilder;
 
 /// Trait for the implementation of a SQLite aggregate function
 ///
-/// This trait is to be used in conjunction with the `sql_function!`
+/// This trait is to be used in conjunction with the `define_sql_function!`
 /// macro for defining a custom SQLite aggregate function. See
-/// the documentation [there](super::prelude::sql_function!) for details.
+/// the documentation [there](super::prelude::define_sql_function!) for details.
 pub trait SqliteAggregateFunction<Args>: Default {
     /// The result type of the SQLite aggregate function
     type Output;
@@ -40,4 +43,10 @@ pub trait SqliteAggregateFunction<Args>: Default {
     /// This is called through a C FFI, as such panics do not propagate to the caller. Panics are
     /// caught and cause a return with an error value.
     fn finalize(aggregator: Option<Self>) -> Self::Output;
+}
+
+/// SQLite specific sql types
+pub mod sql_types {
+    #[doc(inline)]
+    pub use super::types::Timestamptz;
 }

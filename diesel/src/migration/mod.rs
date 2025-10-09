@@ -21,10 +21,10 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 /// in order, therefore two different instances of this type
 /// must be sortable
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, FromSqlRow, AsExpression)]
-#[sql_type = "Text"]
+#[diesel(sql_type = Text)]
 pub struct MigrationVersion<'a>(Cow<'a, str>);
 
-impl<'a> MigrationVersion<'a> {
+impl MigrationVersion<'_> {
     /// Convert the current migration version into
     /// an owned variant with static life time
     pub fn as_owned(&self) -> MigrationVersion<'static> {
@@ -32,12 +32,12 @@ impl<'a> MigrationVersion<'a> {
     }
 }
 
-impl<'a, DB> FromSql<Text, DB> for MigrationVersion<'a>
+impl<DB> FromSql<Text, DB> for MigrationVersion<'_>
 where
     String: FromSql<Text, DB>,
     DB: Backend,
 {
-    fn from_sql(bytes: crate::backend::RawValue<DB>) -> crate::deserialize::Result<Self> {
+    fn from_sql(bytes: DB::RawValue<'_>) -> crate::deserialize::Result<Self> {
         let s = String::from_sql(bytes)?;
         Ok(Self(Cow::Owned(s)))
     }
@@ -48,15 +48,15 @@ where
     Cow<'a, str>: ToSql<Text, DB>,
     DB: Backend,
 {
-    fn to_sql<W: std::io::Write>(
-        &self,
-        out: &mut crate::serialize::Output<W, DB>,
+    fn to_sql<'b>(
+        &'b self,
+        out: &mut crate::serialize::Output<'b, '_, DB>,
     ) -> crate::serialize::Result {
         self.0.to_sql(out)
     }
 }
 
-impl<'a> From<String> for MigrationVersion<'a> {
+impl From<String> for MigrationVersion<'_> {
     fn from(s: String) -> Self {
         MigrationVersion(Cow::Owned(s))
     }
@@ -74,7 +74,7 @@ impl<'a> From<&'a String> for MigrationVersion<'a> {
     }
 }
 
-impl<'a> Display for MigrationVersion<'a> {
+impl Display for MigrationVersion<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.0.as_ref())
     }
@@ -88,16 +88,16 @@ impl<'a> Display for MigrationVersion<'a> {
 /// schema.
 pub trait MigrationName: Display {
     /// The version corresponding to the current migration name
-    fn version(&self) -> MigrationVersion;
+    fn version(&self) -> MigrationVersion<'_>;
 }
 
 /// Represents a migration that interacts with diesel
 pub trait Migration<DB: Backend> {
     /// Apply this migration
-    fn run(&self, conn: &dyn BoxableConnection<DB>) -> Result<()>;
+    fn run(&self, conn: &mut dyn BoxableConnection<DB>) -> Result<()>;
 
     /// Revert this migration
-    fn revert(&self, conn: &dyn BoxableConnection<DB>) -> Result<()>;
+    fn revert(&self, conn: &mut dyn BoxableConnection<DB>) -> Result<()>;
 
     /// Get a the attached metadata for this migration
     fn metadata(&self) -> &dyn MigrationMetadata;
@@ -136,43 +136,43 @@ pub trait MigrationMetadata {
 /// to receive a number of migrations from.
 pub trait MigrationSource<DB: Backend> {
     /// Get a list of migrations associated with this
-    /// migration soucre.
+    /// migration source.
     fn migrations(&self) -> Result<Vec<Box<dyn Migration<DB>>>>;
 }
 
-impl<'a, DB: Backend> Migration<DB> for Box<dyn Migration<DB> + 'a> {
-    fn run(&self, conn: &dyn BoxableConnection<DB>) -> Result<()> {
-        (&**self).run(conn)
+impl<DB: Backend> Migration<DB> for Box<dyn Migration<DB> + '_> {
+    fn run(&self, conn: &mut dyn BoxableConnection<DB>) -> Result<()> {
+        (**self).run(conn)
     }
 
-    fn revert(&self, conn: &dyn BoxableConnection<DB>) -> Result<()> {
-        (&**self).revert(conn)
+    fn revert(&self, conn: &mut dyn BoxableConnection<DB>) -> Result<()> {
+        (**self).revert(conn)
     }
 
     fn metadata(&self) -> &dyn MigrationMetadata {
-        (&**self).metadata()
+        (**self).metadata()
     }
 
     fn name(&self) -> &dyn MigrationName {
-        (&**self).name()
+        (**self).name()
     }
 }
 
-impl<'a, DB: Backend> Migration<DB> for &'a dyn Migration<DB> {
-    fn run(&self, conn: &dyn BoxableConnection<DB>) -> Result<()> {
-        (&**self).run(conn)
+impl<DB: Backend> Migration<DB> for &dyn Migration<DB> {
+    fn run(&self, conn: &mut dyn BoxableConnection<DB>) -> Result<()> {
+        (**self).run(conn)
     }
 
-    fn revert(&self, conn: &dyn BoxableConnection<DB>) -> Result<()> {
-        (&**self).revert(conn)
+    fn revert(&self, conn: &mut dyn BoxableConnection<DB>) -> Result<()> {
+        (**self).revert(conn)
     }
 
     fn metadata(&self) -> &dyn MigrationMetadata {
-        (&**self).metadata()
+        (**self).metadata()
     }
 
     fn name(&self) -> &dyn MigrationName {
-        (&**self).name()
+        (**self).name()
     }
 }
 
@@ -195,12 +195,12 @@ pub trait MigrationConnection: Connection {
     ///      }
     /// }
     /// ```
-    fn setup(&self) -> QueryResult<usize>;
+    fn setup(&mut self) -> QueryResult<usize>;
 }
 
 #[cfg(feature = "postgres")]
 impl MigrationConnection for crate::pg::PgConnection {
-    fn setup(&self) -> QueryResult<usize> {
+    fn setup(&mut self) -> QueryResult<usize> {
         use crate::RunQueryDsl;
         crate::sql_query(CREATE_MIGRATIONS_TABLE).execute(self)
     }
@@ -208,7 +208,7 @@ impl MigrationConnection for crate::pg::PgConnection {
 
 #[cfg(feature = "mysql")]
 impl MigrationConnection for crate::mysql::MysqlConnection {
-    fn setup(&self) -> QueryResult<usize> {
+    fn setup(&mut self) -> QueryResult<usize> {
         use crate::RunQueryDsl;
         crate::sql_query(CREATE_MIGRATIONS_TABLE).execute(self)
     }
@@ -216,7 +216,7 @@ impl MigrationConnection for crate::mysql::MysqlConnection {
 
 #[cfg(feature = "sqlite")]
 impl MigrationConnection for crate::sqlite::SqliteConnection {
-    fn setup(&self) -> QueryResult<usize> {
+    fn setup(&mut self) -> QueryResult<usize> {
         use crate::RunQueryDsl;
         crate::sql_query(CREATE_MIGRATIONS_TABLE).execute(self)
     }

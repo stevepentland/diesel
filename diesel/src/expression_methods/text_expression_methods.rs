@@ -1,8 +1,9 @@
+use self::private::TextOrNullableText;
 use crate::dsl;
 use crate::expression::grouped::Grouped;
 use crate::expression::operators::{Concat, Like, NotLike};
 use crate::expression::{AsExpression, Expression};
-use crate::sql_types::{Nullable, SqlType, Text};
+use crate::sql_types::SqlType;
 
 /// Methods present on text expressions
 pub trait TextExpressionMethods: Expression + Sized {
@@ -25,22 +26,22 @@ pub trait TextExpressionMethods: Expression + Sized {
     /// #     use self::users::dsl::*;
     /// #     use diesel::insert_into;
     /// #
-    /// #     let connection = connection_no_data();
-    /// #     connection.execute("CREATE TABLE users (
+    /// #     let connection = &mut connection_no_data();
+    /// #     diesel::sql_query("CREATE TEMPORARY TABLE users (
     /// #         id INTEGER PRIMARY KEY,
     /// #         name VARCHAR(255) NOT NULL,
     /// #         hair_color VARCHAR(255)
-    /// #     )").unwrap();
+    /// #     )").execute(connection).unwrap();
     /// #
     /// #     insert_into(users)
     /// #         .values(&vec![
     /// #             (id.eq(1), name.eq("Sean"), hair_color.eq(Some("Green"))),
     /// #             (id.eq(2), name.eq("Tess"), hair_color.eq(None)),
     /// #         ])
-    /// #         .execute(&connection)
+    /// #         .execute(connection)
     /// #         .unwrap();
     /// #
-    /// let names = users.select(name.concat(" the Greatest")).load(&connection);
+    /// let names = users.select(name.concat(" the Greatest")).load(connection);
     /// let expected_names = vec![
     ///     "Sean the Greatest".to_string(),
     ///     "Tess the Greatest".to_string(),
@@ -48,11 +49,8 @@ pub trait TextExpressionMethods: Expression + Sized {
     /// assert_eq!(Ok(expected_names), names);
     ///
     /// // If the value is nullable, the output will be nullable
-    /// let names = users.select(hair_color.concat("ish")).load(&connection);
-    /// let expected_names = vec![
-    ///     Some("Greenish".to_string()),
-    ///     None,
-    /// ];
+    /// let names = users.select(hair_color.concat("ish")).load(connection);
+    /// let expected_names = vec![Some("Greenish".to_string()), None];
     /// assert_eq!(Ok(expected_names), names);
     /// # }
     /// ```
@@ -82,12 +80,12 @@ pub trait TextExpressionMethods: Expression + Sized {
     /// #
     /// # fn run_test() -> QueryResult<()> {
     /// #     use schema::users::dsl::*;
-    /// #     let connection = establish_connection();
+    /// #     let connection = &mut establish_connection();
     /// #
     /// let starts_with_s = users
     ///     .select(name)
     ///     .filter(name.like("S%"))
-    ///     .load::<String>(&connection)?;
+    ///     .load::<String>(connection)?;
     /// assert_eq!(vec!["Sean"], starts_with_s);
     /// #     Ok(())
     /// # }
@@ -118,12 +116,12 @@ pub trait TextExpressionMethods: Expression + Sized {
     /// #
     /// # fn run_test() -> QueryResult<()> {
     /// #     use schema::users::dsl::*;
-    /// #     let connection = establish_connection();
+    /// #     let connection = &mut establish_connection();
     /// #
     /// let doesnt_start_with_s = users
     ///     .select(name)
     ///     .filter(name.not_like("S%"))
-    ///     .load::<String>(&connection)?;
+    ///     .load::<String>(connection)?;
     /// assert_eq!(vec!["Tess"], doesnt_start_with_s);
     /// #     Ok(())
     /// # }
@@ -137,18 +135,26 @@ pub trait TextExpressionMethods: Expression + Sized {
     }
 }
 
-#[doc(hidden)]
-/// Marker trait used to implement `TextExpressionMethods` on the appropriate
-/// types. Once coherence takes associated types into account, we can remove
-/// this trait.
-pub trait TextOrNullableText {}
-
-impl TextOrNullableText for Text {}
-impl TextOrNullableText for Nullable<Text> {}
-
 impl<T> TextExpressionMethods for T
 where
     T: Expression,
     T::SqlType: TextOrNullableText,
 {
+}
+
+mod private {
+    use crate::sql_types::{Nullable, Text};
+
+    /// Marker trait used to implement `TextExpressionMethods` on the appropriate
+    /// types. Once coherence takes associated types into account, we can remove
+    /// this trait.
+    pub trait TextOrNullableText {}
+
+    impl TextOrNullableText for Text {}
+    impl TextOrNullableText for Nullable<Text> {}
+
+    #[cfg(feature = "postgres_backend")]
+    impl TextOrNullableText for crate::pg::sql_types::Citext {}
+    #[cfg(feature = "postgres_backend")]
+    impl TextOrNullableText for Nullable<crate::pg::sql_types::Citext> {}
 }

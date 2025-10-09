@@ -77,13 +77,11 @@
 //! #
 //! # fn result_main() -> QueryResult<()> {
 //! #
-//! # let conn = connection_setup::establish_connection();
+//! # let conn = &mut connection_setup::establish_connection();
 //! #
 //! # // Create some example data by using typical SQL statements.
-//! # connection_setup::create_user_table(&conn);
-//! # // Create some example data by using typical SQL statements.
-//! # connection_setup::create_user_table(&conn);
-//! # sql_query("INSERT INTO users (name) VALUES ('Sean'), ('Tess')").execute(&conn)?;
+//! # connection_setup::create_user_table(conn);
+//! # sql_query("INSERT INTO users (name) VALUES ('Sean'), ('Tess')").execute(conn)?;
 //!
 //!     let users = diesel_dynamic_schema::table("users");
 //!     let id = users.column::<Untyped, _>("id");
@@ -95,7 +93,7 @@
 //!     select.add_field(name);
 //!
 //!     let actual_data: Vec<DynamicRow<NamedField<MyDynamicValue>>> =
-//!         users.select(select).load(&conn)?;
+//!         users.select(select).load(conn)?;
 //!
 //!     assert_eq!(
 //!         actual_data[0]["name"],
@@ -122,36 +120,36 @@
 //! #
 //! #[derive(PartialEq, Debug)]
 //! enum MyDynamicValue {
-//!    String(String),
-//!    Integer(i32),
+//!     String(String),
+//!     Integer(i32),
 //! }
 //!
 //! # #[cfg(feature = "postgres")]
 //! impl FromSql<Any, diesel::pg::Pg> for MyDynamicValue {
-//!    fn from_sql(value: diesel::pg::PgValue) -> deserialize::Result<Self> {
-//!        use diesel::pg::Pg;
-//!        use std::num::NonZeroU32;
+//!     fn from_sql(value: diesel::pg::PgValue) -> deserialize::Result<Self> {
+//!         use diesel::pg::Pg;
+//!         use std::num::NonZeroU32;
 //!
-//!        const VARCHAR_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(1043) };
-//!        const TEXT_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(25) };
-//!        const INTEGER_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(23) };
+//!         const VARCHAR_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(1043) };
+//!         const TEXT_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(25) };
+//!         const INTEGER_OID: NonZeroU32 = unsafe { NonZeroU32::new_unchecked(23) };
 //!
-//!        match value.get_oid() {
-//!            VARCHAR_OID | TEXT_OID => {
-//!                <String as FromSql<diesel::sql_types::Text, Pg>>::from_sql(value)
-//!                    .map(MyDynamicValue::String)
-//!            }
-//!            INTEGER_OID => <i32 as FromSql<diesel::sql_types::Integer, Pg>>::from_sql(value)
-//!                .map(MyDynamicValue::Integer),
-//!            e => Err(format!("Unknown type: {}", e).into()),
-//!        }
-//!    }
+//!         match value.get_oid() {
+//!             VARCHAR_OID | TEXT_OID => {
+//!                 <String as FromSql<diesel::sql_types::Text, Pg>>::from_sql(value)
+//!                     .map(MyDynamicValue::String)
+//!             }
+//!             INTEGER_OID => <i32 as FromSql<diesel::sql_types::Integer, Pg>>::from_sql(value)
+//!                 .map(MyDynamicValue::Integer),
+//!             e => Err(format!("Unknown type: {}", e).into()),
+//!         }
+//!     }
 //! }
 //! ```
 
 use diesel::backend::Backend;
 use diesel::deserialize::{self, FromSql};
-use diesel::expression::{QueryMetadata, TypedExpressionType};
+use diesel::expression::TypedExpressionType;
 use diesel::row::{Field, NamedRow, Row};
 use diesel::QueryableByName;
 use std::iter::FromIterator;
@@ -166,22 +164,22 @@ pub struct Any;
 impl TypedExpressionType for Any {}
 
 #[cfg(feature = "postgres")]
-impl QueryMetadata<Any> for diesel::pg::Pg {
-    fn row_metadata(_lookup: &Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
+impl diesel::expression::QueryMetadata<Any> for diesel::pg::Pg {
+    fn row_metadata(_lookup: &mut Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
         out.push(None)
     }
 }
 
 #[cfg(feature = "sqlite")]
-impl QueryMetadata<Any> for diesel::sqlite::Sqlite {
-    fn row_metadata(_lookup: &Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
+impl diesel::expression::QueryMetadata<Any> for diesel::sqlite::Sqlite {
+    fn row_metadata(_lookup: &mut Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
         out.push(None)
     }
 }
 
 #[cfg(feature = "mysql")]
-impl QueryMetadata<Any> for diesel::mysql::Mysql {
-    fn row_metadata(_lookup: &Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
+impl diesel::expression::QueryMetadata<Any> for diesel::mysql::Mysql {
+    fn row_metadata(_lookup: &mut Self::MetadataLookup, out: &mut Vec<Option<Self::TypeMetadata>>) {
         out.push(None)
     }
 }
@@ -196,7 +194,7 @@ pub struct DynamicRow<I> {
 /// A helper struct used as field type in `DynamicRow`
 /// to also return the name of the field along with the
 /// value
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct NamedField<I> {
     /// Name of the field
     pub name: String,

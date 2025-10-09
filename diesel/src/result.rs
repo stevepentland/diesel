@@ -1,6 +1,5 @@
 //! Errors, type aliases, and functions related to working with `Result`.
 
-use std::convert::From;
 use std::error::Error as StdError;
 use std::ffi::NulError;
 use std::fmt::{self, Display};
@@ -62,6 +61,21 @@ pub enum Error {
     /// by PostgreSQL.
     SerializationError(Box<dyn StdError + Send + Sync>),
 
+    /// An error occurred when attempting rollback of a transaction subsequently to a failed
+    /// commit attempt.
+    ///
+    /// When a commit attempt fails and Diesel believes that it can attempt a rollback to return
+    /// the connection back in a usable state (out of that transaction), it attempts it then
+    /// returns the original error.
+    ///
+    /// If that fails, you get this.
+    RollbackErrorOnCommit {
+        /// The error that was encountered when attempting the rollback
+        rollback_error: Box<Error>,
+        /// The error that was encountered during the failed commit attempt
+        commit_error: Box<Error>,
+    },
+
     /// Roll back the current transaction.
     ///
     /// You can return this variant inside of a transaction when you want to
@@ -73,9 +87,16 @@ pub enum Error {
     /// Attempted to perform an operation that cannot be done inside a transaction
     /// when a transaction was already open.
     AlreadyInTransaction,
+
+    /// Attempted to perform an operation that can only be done inside a transaction
+    /// when no transaction was open
+    NotInTransaction,
+
+    /// Transaction manager broken, likely due to a broken connection. No other operations are possible.
+    BrokenTransactionManager,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 /// The kind of database error that occurred.
 ///
 /// This is not meant to exhaustively cover all possible errors, but is used to
@@ -85,16 +106,16 @@ pub enum Error {
 #[non_exhaustive]
 pub enum DatabaseErrorKind {
     /// A unique constraint was violated.
-    UniqueViolation,
+    UniqueViolation = 0,
 
     /// A foreign key constraint was violated.
-    ForeignKeyViolation,
+    ForeignKeyViolation = 1,
 
     /// The query could not be sent to the database due to a protocol violation.
     ///
     /// An example of a case where this would occur is if you attempted to send
     /// a query with more than 65000 bind parameters using PostgreSQL.
-    UnableToSendCommand,
+    UnableToSendCommand = 2,
 
     /// A serializable transaction failed to commit due to a read/write
     /// dependency on a concurrent transaction.
@@ -103,23 +124,35 @@ pub enum DatabaseErrorKind {
     ///
     /// This error is only detected for PostgreSQL, as we do not yet support
     /// transaction isolation levels for other backends.
-    SerializationFailure,
+    SerializationFailure = 3,
 
     /// The command could not be completed because the transaction was read
     /// only.
     ///
     /// This error will also be returned for `SELECT` statements which attempted
     /// to lock the rows.
-    ReadOnlyTransaction,
+    ReadOnlyTransaction = 4,
+
+    /// A restrict constraint was violated.
+    RestrictViolation = 9,
 
     /// A not null constraint was violated.
-    NotNullViolation,
+    NotNullViolation = 5,
 
     /// A check constraint was violated.
-    CheckViolation,
+    CheckViolation = 6,
+
+    /// An exclusion constraint was violated.
+    ExclusionViolation = 10,
+
+    /// The connection to the server was unexpectedly closed.
+    ///
+    /// This error is only detected for PostgreSQL and is emitted on a best-effort basis
+    /// and may be missed.
+    ClosedConnection = 7,
 
     #[doc(hidden)]
-    Unknown, // Match against _ instead, more variants may be added in the future
+    Unknown = 8, // Match against _ instead, more variants may be added in the future
 }
 
 /// Information about an error that was returned by the database.
@@ -164,7 +197,7 @@ pub trait DatabaseErrorInformation {
 }
 
 impl fmt::Debug for dyn DatabaseErrorInformation + Send + Sync {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.message(), f)
     }
 }
@@ -241,7 +274,7 @@ pub trait OptionalExtension<T> {
     /// # Example
     ///
     /// ```rust
-    /// use diesel::{QueryResult, NotFound, OptionalExtension};
+    /// use diesel::{NotFound, OptionalExtension, QueryResult};
     ///
     /// let result: QueryResult<i32> = Ok(1);
     /// assert_eq!(Ok(Some(1)), result.optional());
@@ -262,6 +295,34 @@ impl<T> OptionalExtension<T> for QueryResult<T> {
     }
 }
 
+/// See the [method documentation](OptionalEmptyChangesetExtension::optional_empty_changeset).
+pub trait OptionalEmptyChangesetExtension<T> {
+    /// By default, Diesel treats an empty update as a `QueryBuilderError`. This method will
+    /// convert that error into `None`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use diesel::{
+    ///     result::EmptyChangeset, result::Error::QueryBuilderError, OptionalEmptyChangesetExtension,
+    ///     QueryResult,
+    /// };
+    /// let result: QueryResult<i32> = Err(QueryBuilderError(Box::new(EmptyChangeset)));
+    /// assert_eq!(Ok(None), result.optional_empty_changeset());
+    /// ```
+    fn optional_empty_changeset(self) -> Result<Option<T>, Error>;
+}
+
+impl<T> OptionalEmptyChangesetExtension<T> for QueryResult<T> {
+    fn optional_empty_changeset(self) -> Result<Option<T>, Error> {
+        match self {
+            Ok(value) => Ok(Some(value)),
+            Err(Error::QueryBuilderError(e)) if e.is::<EmptyChangeset>() => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 impl From<NulError> for ConnectionError {
     fn from(e: NulError) -> Self {
         ConnectionError::InvalidCString(e)
@@ -275,19 +336,37 @@ impl From<NulError> for Error {
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Error::InvalidCString(ref nul_err) => write!(f, "{}", nul_err),
+            Error::InvalidCString(ref nul_err) => write!(f, "{nul_err}"),
             Error::DatabaseError(_, ref e) => write!(f, "{}", e.message()),
             Error::NotFound => f.write_str("Record not found"),
             Error::QueryBuilderError(ref e) => e.fmt(f),
             Error::DeserializationError(ref e) => e.fmt(f),
             Error::SerializationError(ref e) => e.fmt(f),
-            Error::RollbackTransaction => write!(f, "The current transaction was aborted"),
+            Error::RollbackErrorOnCommit {
+                ref rollback_error,
+                ref commit_error,
+            } => {
+                write!(
+                    f,
+                    "Transaction rollback failed: {} \
+                        (rollback attempted because of failure to commit: {})",
+                    &**rollback_error, &**commit_error
+                )?;
+                Ok(())
+            }
+            Error::RollbackTransaction => {
+                write!(f, "You have asked diesel to rollback the transaction")
+            }
+            Error::BrokenTransactionManager => write!(f, "The transaction manager is broken"),
             Error::AlreadyInTransaction => write!(
                 f,
                 "Cannot perform this operation while a transaction is open",
             ),
+            Error::NotInTransaction => {
+                write!(f, "Cannot perform this operation outside of a transaction",)
+            }
         }
     }
 }
@@ -305,11 +384,11 @@ impl StdError for Error {
 }
 
 impl Display for ConnectionError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             ConnectionError::InvalidCString(ref nul_err) => nul_err.fmt(f),
-            ConnectionError::BadConnection(ref s) => write!(f, "{}", s),
-            ConnectionError::InvalidConnectionUrl(ref s) => write!(f, "{}", s),
+            ConnectionError::BadConnection(ref s) => write!(f, "{s}"),
+            ConnectionError::InvalidConnectionUrl(ref s) => write!(f, "{s}"),
             ConnectionError::CouldntSetupConfiguration(ref e) => e.fmt(f),
         }
     }
@@ -328,10 +407,8 @@ impl StdError for ConnectionError {
 impl PartialEq for Error {
     fn eq(&self, other: &Error) -> bool {
         match (self, other) {
-            (&Error::InvalidCString(ref a), &Error::InvalidCString(ref b)) => a == b,
-            (&Error::DatabaseError(_, ref a), &Error::DatabaseError(_, ref b)) => {
-                a.message() == b.message()
-            }
+            (Error::InvalidCString(a), Error::InvalidCString(b)) => a == b,
+            (Error::DatabaseError(_, a), Error::DatabaseError(_, b)) => a.message() == b.message(),
             (&Error::NotFound, &Error::NotFound) => true,
             (&Error::RollbackTransaction, &Error::RollbackTransaction) => true,
             (&Error::AlreadyInTransaction, &Error::AlreadyInTransaction) => true,
@@ -344,11 +421,7 @@ impl PartialEq for Error {
 #[allow(warnings)]
 fn error_impls_send() {
     let err: Error = unimplemented!();
-    let x: &Send = &err;
-}
-
-pub(crate) fn first_or_not_found<T>(records: QueryResult<Vec<T>>) -> QueryResult<T> {
-    records?.into_iter().next().ok_or(Error::NotFound)
+    let x: &dyn Send = &err;
 }
 
 /// An unexpected `NULL` was encountered during deserialization
@@ -356,21 +429,97 @@ pub(crate) fn first_or_not_found<T>(records: QueryResult<Vec<T>>) -> QueryResult
 pub struct UnexpectedNullError;
 
 impl fmt::Display for UnexpectedNullError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Unexpected null for non-null column")
     }
 }
 
 impl StdError for UnexpectedNullError {}
 
-/// Expected more fields then present in the current row while deserialising results
+/// Expected more fields then present in the current row while deserializing results
 #[derive(Debug, Clone, Copy)]
 pub struct UnexpectedEndOfRow;
 
 impl fmt::Display for UnexpectedEndOfRow {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Unexpected end of row")
     }
 }
 
 impl StdError for UnexpectedEndOfRow {}
+
+/// Expected when an update has no changes to save.
+///
+/// When using `optional_empty_changeset`, this error is turned into `None`.
+#[derive(Debug, Clone, Copy)]
+pub struct EmptyChangeset;
+
+impl fmt::Display for EmptyChangeset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "There are no changes to save. This query cannot be built"
+        )
+    }
+}
+
+impl StdError for EmptyChangeset {}
+
+/// Expected when you try to execute an empty query
+#[derive(Debug, Clone, Copy)]
+pub struct EmptyQuery;
+
+impl fmt::Display for EmptyQuery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Detected an empty query. These are not supported by your database system"
+        )
+    }
+}
+
+impl StdError for EmptyQuery {}
+
+/// An error occurred while deserializing a field
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct DeserializeFieldError {
+    /// The name of the field that failed to deserialize
+    pub field_name: Option<String>,
+    /// The error that occurred while deserializing the field
+    pub error: Box<dyn StdError + Send + Sync>,
+}
+
+impl DeserializeFieldError {
+    #[cold]
+    pub(crate) fn new<'a, F, DB>(field: F, error: Box<dyn std::error::Error + Send + Sync>) -> Self
+    where
+        DB: crate::backend::Backend,
+        F: crate::row::Field<'a, DB>,
+    {
+        DeserializeFieldError {
+            field_name: field.field_name().map(|s| s.to_string()),
+            error,
+        }
+    }
+}
+
+impl StdError for DeserializeFieldError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&*self.error)
+    }
+}
+
+impl fmt::Display for DeserializeFieldError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(ref field_name) = self.field_name {
+            write!(
+                f,
+                "Error deserializing field '{}': {}",
+                field_name, self.error
+            )
+        } else {
+            write!(f, "Error deserializing field: {}", self.error)
+        }
+    }
+}

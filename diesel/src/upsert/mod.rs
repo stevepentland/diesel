@@ -4,6 +4,7 @@
 //!
 //! * PostgreSQL version 9.5 or newer
 //! * Sqlite3 version 3.24.0 or newer
+//! * MySQL version 5.7 or newer
 //!
 //! See [the methods on `InsertStatement`](crate::query_builder::InsertStatement#impl-2)
 //! for usage examples.
@@ -18,7 +19,7 @@ mod on_conflict_extension;
 
 pub use self::on_conflict_extension::DecoratableTarget;
 pub use self::on_conflict_extension::*;
-#[cfg(feature = "postgres")]
+#[cfg(feature = "postgres_backend")]
 pub use crate::pg::query_builder::on_constraint::*;
 
 /// Represents `excluded.column` in an `ON CONFLICT DO UPDATE` clause.

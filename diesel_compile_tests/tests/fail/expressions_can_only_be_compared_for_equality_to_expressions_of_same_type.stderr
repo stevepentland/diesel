@@ -1,16 +1,31 @@
 error[E0277]: the trait bound `str: diesel::Expression` is not satisfied
-  --> $DIR/expressions_can_only_be_compared_for_equality_to_expressions_of_same_type.rs:15:22
+  --> tests/fail/expressions_can_only_be_compared_for_equality_to_expressions_of_same_type.rs:15:19
    |
-15 |     let pred = id.eq("string");
-   |                      ^^^^^^^^ the trait `diesel::Expression` is not implemented for `str`
+LL |     let pred = id.eq("string");
+   |                   ^^ the trait `diesel::Expression` is not implemented for `str`
    |
-   = note: required because of the requirements on the impl of `diesel::Expression` for `&str`
-   = note: required because of the requirements on the impl of `AsExpression<diesel::sql_types::Integer>` for `&str`
+   = help: the following other types implement trait `diesel::Expression`:
+             &T
+             AliasedField<S, C>
+             Box<T>
+             CaseWhen<diesel::expression::case_when::non_public_types::CaseWhenConditionsIntermediateNode<W, T, Whens>, E>
+             CaseWhen<diesel::expression::case_when::non_public_types::CaseWhenConditionsLeaf<W, T>, diesel::expression::case_when::non_public_types::ElseExpression<E>>
+             CaseWhen<diesel::expression::case_when::non_public_types::CaseWhenConditionsLeaf<W, T>, diesel::expression::case_when::non_public_types::NoElseExpression>
+             CountStar
+             Exists<T>
+           and N others
+   = note: required for `&str` to implement `diesel::Expression`
+   = note: required for `&str` to implement `AsExpression<diesel::sql_types::Integer>`
 
-error[E0271]: type mismatch resolving `<columns::name as diesel::Expression>::SqlType == diesel::sql_types::Integer`
-  --> $DIR/expressions_can_only_be_compared_for_equality_to_expressions_of_same_type.rs:16:19
+error[E0271]: type mismatch resolving `<name as Expression>::SqlType == Integer`
+  --> tests/fail/expressions_can_only_be_compared_for_equality_to_expressions_of_same_type.rs:17:19
    |
-16 |     let pred = id.eq(name);
-   |                   ^^ expected struct `diesel::sql_types::Text`, found struct `diesel::sql_types::Integer`
+LL |     let pred = id.eq(name);
+   |                   ^^ type mismatch resolving `<name as Expression>::SqlType == Integer`
    |
-   = note: required because of the requirements on the impl of `AsExpression<diesel::sql_types::Integer>` for `columns::name`
+note: expected this to be `diesel::sql_types::Integer`
+  --> tests/fail/expressions_can_only_be_compared_for_equality_to_expressions_of_same_type.rs:8:17
+   |
+ LL |         name -> VarChar,
+   |                 ^^^^^^^
+   = note: required for `columns::name` to implement `AsExpression<diesel::sql_types::Integer>`

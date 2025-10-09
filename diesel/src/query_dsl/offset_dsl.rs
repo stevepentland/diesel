@@ -1,4 +1,4 @@
-use crate::query_source::Table;
+use crate::query_source::QueryRelation;
 
 /// The `offset` method
 ///
@@ -7,7 +7,7 @@ use crate::query_source::Table;
 /// to call `offset` from generic code.
 ///
 /// [`QueryDsl`]: crate::QueryDsl
-pub trait OffsetDsl {
+pub trait OffsetDsl<DummyArgForAutoType = i64> {
     /// The type returned by `.offset`.
     type Output;
 
@@ -17,7 +17,7 @@ pub trait OffsetDsl {
 
 impl<T> OffsetDsl for T
 where
-    T: Table,
+    T: QueryRelation,
     T::Query: OffsetDsl,
 {
     type Output = <T::Query as OffsetDsl>::Output;
